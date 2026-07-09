@@ -53,6 +53,21 @@ Aguarde o banco ficar saudável (healthcheck) e o Streamlit iniciar.
 
 Abra http://localhost:8501 no navegador.
 
+## Extração do Confluence
+
+Extrai as páginas do espaço `BE` para `data/raw/` (um `{id}.json` por página
++ `index.json`). Requer as credenciais `CONFLUENCE_*` no `.env`.
+
+```bash
+# com o venv local
+python src/core/extract.py
+
+# ou via Docker
+docker compose run --rm app python src/core/extract.py
+```
+
+O formato dos arquivos gerados está documentado em [docs/extracao.md](docs/extracao.md).
+
 ## Estrutura do projeto
 
 ```
@@ -63,8 +78,12 @@ bobby-sensei/
 ├── .env.example
 ├── .gitignore
 ├── README.md
+├── data/               # gerada pela extração (fora do git)
+│   └── raw/            # {id}.json por página + index.json
 ├── db/
 │   └── init.sql        # habilita vector e pg_search no banco
+├── docs/
+│   └── extracao.md     # contrato dos dados brutos da extração
 └── src/
     ├── app.py          # Streamlit: só UI, chama core/
     └── core/           # lógica de RAG (sem import streamlit)
