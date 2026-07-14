@@ -102,7 +102,9 @@ def _download_attachment(confluence: Confluence, att: dict, page_id: str) -> str
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        resp = confluence._session.get(att["download_url"], stream=True)
+        resp = confluence._session.get(
+            att["download_url"], stream=True, timeout=(5, 30)
+        )
         resp.raise_for_status()
         with open(dest, "wb") as f:
             for chunk in resp.iter_content(chunk_size=256 * 1024):
