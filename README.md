@@ -68,6 +68,23 @@ docker compose run --rm app python src/core/extract.py
 
 O formato dos arquivos gerados está documentado em [docs/extracao.md](docs/extracao.md).
 
+## Embeddings (banco vetorial)
+
+Gera embeddings dos chunks formatados (`text-embedding-3-small`, 1536 dim) e
+carrega na tabela `chunks` do ParadeDB, com índices HNSW (vetorial) e BM25:
+
+```bash
+# uma vez, no venv: instala o pacote core/ 
+pip install -e .
+
+# pipeline: extração -> formatação -> embeddings
+python src/core/extract.py
+python src/core/format.py
+python src/core/embed.py
+```
+
+Detalhes do schema e das consultas em [docs/embeddings.md](docs/embeddings.md).
+
 ## Estrutura do projeto
 
 ```
@@ -83,7 +100,9 @@ bobby-sensei/
 ├── db/
 │   └── init.sql        # habilita vector e pg_search no banco
 ├── docs/
-│   └── extracao.md     # contrato dos dados brutos da extração
+│   ├── extracao.md     # contrato dos dados brutos da extração
+│   └── embeddings.md   # schema da tabela chunks e consultas de referência
+├── pyproject.toml      # torna os pacotes de src/ instaláveis (pip install -e .)
 └── src/
     ├── app.py          # Streamlit: só UI, chama core/
     └── core/           # lógica de RAG (sem import streamlit)
