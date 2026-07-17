@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     environment: producao
 
@@ -43,19 +43,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  redeploy:
+    runs-on: self-hosted
+    needs: build
+    environment: producao
+
+    steps:
       - name: Redeploy stack no Portainer
         run: |
-          STACK_JSON=$(curl -skf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
-            "${{ secrets.PORTAINER_URL }}/api/stacks")
+          STACK_JSON=$(curl -sf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
+            "http://localhost:9000/api/stacks")
 
           STACK_ID=$(echo "$STACK_JSON" | jq -r '.[] | select(.Name == "bobby-sensei") | .Id')
           ENDPOINT_ID=$(echo "$STACK_JSON" | jq -r '.[] | select(.Name == "bobby-sensei") | .EndpointId')
 
-          STACK_FILE=$(curl -skf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
-            "${{ secrets.PORTAINER_URL }}/api/stacks/$STACK_ID/file" | jq '.StackFileContent')
+          STACK_FILE=$(curl -sf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
+            "http://localhost:9000/api/stacks/$STACK_ID/file" | jq '.StackFileContent')
 
-          curl -skf -X PUT \
+          curl -sf -X PUT \
             -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "${{ secrets.PORTAINER_URL }}/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
+            "http://localhost:9000/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
             -d "{\"stackFileContent\": $STACK_FILE, \"pullImage\": true, \"prune\": false}"
