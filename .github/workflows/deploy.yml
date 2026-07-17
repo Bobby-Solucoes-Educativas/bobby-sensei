@@ -26,6 +26,7 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/bobby-sensei-app:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -36,9 +37,24 @@ jobs:
           context: .
           file: Dockerfile.db
           push: true
+          platforms: linux/amd64
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/bobby-sensei-db:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger Portainer redeploy
-        run: curl -f -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}"
+      - name: Redeploy stack no Portainer
+        run: |
+          STACK_JSON=$(curl -sf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
+            "${{ secrets.PORTAINER_URL }}/api/stacks")
+
+          STACK_ID=$(echo "$STACK_JSON" | jq -r '.[] | select(.Name == "bobby-sensei") | .Id')
+          ENDPOINT_ID=$(echo "$STACK_JSON" | jq -r '.[] | select(.Name == "bobby-sensei") | .EndpointId')
+
+          STACK_FILE=$(curl -sf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
+            "${{ secrets.PORTAINER_URL }}/api/stacks/$STACK_ID/file" | jq '.StackFileContent')
+
+          curl -sf -X PUT \
+            -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.PORTAINER_URL }}/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
+            -d "{\"stackFileContent\": $STACK_FILE, \"pullImage\": true, \"prune\": false}"
