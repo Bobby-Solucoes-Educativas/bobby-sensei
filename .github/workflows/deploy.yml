@@ -56,6 +56,7 @@ jobs:
 
           STACK_ID=$(echo "$STACK_JSON" | jq -r '.[] | select(.Name == "bobby-sensei") | .Id')
           ENDPOINT_ID=$(echo "$STACK_JSON" | jq -r '.[] | select(.Name == "bobby-sensei") | .EndpointId')
+          ENV=$(echo "$STACK_JSON" | jq '.[] | select(.Name == "bobby-sensei") | .Env')
 
           STACK_FILE=$(curl -sf -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
             "http://localhost:9000/api/stacks/$STACK_ID/file" | jq '.StackFileContent')
@@ -64,4 +65,4 @@ jobs:
             -H "X-API-Key: ${{ secrets.PORTAINER_TOKEN }}" \
             -H "Content-Type: application/json" \
             "http://localhost:9000/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
-            -d "{\"stackFileContent\": $STACK_FILE, \"pullImage\": true, \"prune\": false}"
+            -d "{\"stackFileContent\": $STACK_FILE, \"env\": $ENV, \"pullImage\": true, \"prune\": false}"
