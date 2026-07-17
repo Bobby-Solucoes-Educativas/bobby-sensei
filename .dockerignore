@@ -1,0 +1,11 @@
+.env
+.git/
+data/
+__pycache__/
+**/*.pyc
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
+docs/
+docker-compose*.yml
+Dockerfile*
