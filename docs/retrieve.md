@@ -94,41 +94,24 @@ def answer(pergunta: str, historico: list[dict] | None = None) -> str
 - Retorna a resposta como `str` puro — o `app.py` não precisa importar nada
   de `langchain_core`.
 
-## Dependência: schema esperado da tabela `chunks` (TAI7-6)
+## Fonte de dados: tabela `chunks` (TAI7-6)
 
-`_hybrid_retrieve` assume que a TAI7-6 populou uma tabela num ParadeDB
-rodando, com os campos produzidos pelo `format.py` (ver `docs/format.md`)
-mais a coluna de embedding:
+`_hybrid_retrieve` consulta a tabela `chunks` populada pela TAI7-6
+(`embed.py`), com os campos produzidos pelo `format.py` (ver `docs/format.md`)
+mais a coluna de embedding. O schema e os índices (HNSW vetorial + BM25 do
+ParadeDB) são criados por `db.ensure_schema()` — a referência autoritativa é
+`src/core/db.py`; detalhes e consultas em `docs/embeddings.md`.
 
-```sql
-CREATE TABLE chunks (
-    chunk_id     text PRIMARY KEY,   -- "<page_id>-<indice>"
-    page_id      text,
-    title        text,
-    url          text,
-    parent_id    text,
-    ancestors    jsonb,
-    breadcrumb   text,
-    chunk_index  int,
-    text         text,               -- já inclui o breadcrumb no topo
-    attachments  jsonb,
-    embedding    vector(1536)        -- text-embedding-3-small, dim nativa
-);
-
-CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX ON chunks USING bm25 (chunk_id, text) WITH (key_field='chunk_id');
-```
-
-Enquanto esse schema não existir com dados reais, `_hybrid_retrieve`/`answer()`
-levantam erro de conexão/tabela inexistente. As partes que não tocam o banco
-já são testáveis isoladamente:
+O pipeline foi validado ponta a ponta contra o banco real (2.289 chunks de
+378 páginas): busca vetorial, busca BM25, fusão RRF e geração respondem
+usando o contexto recuperado, citando a página de origem. As partes puras
+seguem testáveis isoladamente sem banco:
 - `reciprocal_rank_fusion` (função pura, com listas de chunks fabricadas)
 - `_format_context` (função pura)
 - A sub-chain `_prompt | _llm | StrOutputParser()` isolada, invocada
   diretamente com `{"pergunta", "historico", "contexto"}` fabricados à mão —
   valida grounding (a resposta usa só o contexto) e uso real do histórico
-  (uma pergunta de acompanhamento só faz sentido com a resposta anterior)
-  contra a API da OpenAI de verdade.
+  (uma pergunta de acompanhamento só faz sentido com a resposta anterior).
 
 ## Observações para a próxima etapa (interface — TAI7-9)
 
@@ -136,6 +119,6 @@ já são testáveis isoladamente:
   chain) é implementação interna do módulo.
 - `historico` pode ser passado direto de `st.session_state.messages` (mesmo
   formato de dict), sem conversão manual.
-- Confirmar a sintaxe de `bm25_search` (operador `@@@`, `paradedb.score()`)
-  contra a versão do ParadeDB fixada assim que o banco subir — a API do
-  `pg_search` muda entre versões.
+- A sintaxe de `bm25_search` (operador `@@@`, `paradedb.score()`) foi
+  validada com `pg_search` 0.24.3 — a API do ParadeDB muda entre versões, então
+  reconferir se o time atualizar a imagem do banco.

@@ -26,34 +26,11 @@ pura e reutilizável; o app.py é quem chama `answer()` e desenha a tela.
 Streamlit: `[{"role": "user"|"assistant", "content": str}, ...]`, sem incluir
 a pergunta atual.
 
-DEPENDÊNCIA (TAI7-6, ainda em aberto): `_hybrid_retrieve` assume uma tabela
-`chunks` já populada com os campos produzidos pelo format.py (TAI7-7) mais a
-coluna de embedding. Contrato esperado:
-
-    CREATE TABLE chunks (
-        chunk_id     text PRIMARY KEY,   -- "<page_id>-<indice>"
-        page_id      text,
-        title        text,
-        url          text,
-        parent_id    text,
-        ancestors    jsonb,
-        breadcrumb   text,               -- "Ancestral > ... > Página"
-        chunk_index  int,
-        text         text,               -- texto do chunk (já com breadcrumb no topo)
-        attachments  jsonb,
-        embedding    vector(1536)        -- text-embedding-3-small, dim nativa
-    );
-
-    -- índice vetorial (similaridade de cosseno)
-    CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);
-    -- índice BM25 do ParadeDB (busca por palavra-chave de verdade)
-    CREATE INDEX ON chunks USING bm25 (chunk_id, text) WITH (key_field='chunk_id');
-
-Enquanto a TAI7-6 não subir esse schema + dados num ParadeDB rodando,
-`_hybrid_retrieve`/`answer()` não têm o que consultar e `retrieve_and_format`
-levanta erro de conexão/tabela inexistente. As partes que não tocam o banco
-(reciprocal_rank_fusion, _format_context, e a sub-chain prompt|llm|parser
-isolada com contexto/histórico sintéticos) já são exercitáveis hoje.
+DADOS: `_hybrid_retrieve` consulta a tabela `chunks` populada pela TAI7-6
+(`embed.py`) — schema e índices (HNSW vetorial + BM25 do ParadeDB) são criados
+por `db.ensure_schema()`, ver `src/core/db.py` e `docs/embeddings.md`. O
+pipeline foi validado ponta a ponta contra o banco real (2.289 chunks): as
+duas buscas, a fusão RRF e a geração respondem com o contexto recuperado.
 """
 
 from pathlib import Path
@@ -154,8 +131,9 @@ def bm25_search(conn, query_text: str, limit: int = TOP_K_EACH) -> list[dict]:
     do ParadeDB. Complementa a busca vetorial: pega correspondência exata de
     termos (siglas, nomes de sistema) que a similaridade semântica às vezes perde.
 
-    Obs.: operador `@@@` e função `paradedb.score()` seguem a API do pg_search;
-    confirmar contra a versão fixada do ParadeDB quando a TAI7-6 subir o banco."""
+    Obs.: operador `@@@` e função `paradedb.score()` são a API do pg_search
+    (validado com pg_search 0.24.3). Busca só na coluna `text` — que já traz o
+    breadcrumb (logo, o caminho/título da página) prefixado pelo format.py."""
     sql = """
         SELECT chunk_id, page_id, title, url, breadcrumb, text,
                paradedb.score(chunk_id) AS score
