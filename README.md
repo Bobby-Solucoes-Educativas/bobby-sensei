@@ -11,7 +11,7 @@ Assistente RAG sobre o Confluence da Bobby — Time 7 (Automações e IA).
 | Formatação | BeautifulSoup |
 | Orquestração RAG | LangChain |
 | Embedding | OpenAI `text-embedding-3-small` (1536 dim) |
-| LLM | GPT-4o mini (OpenAI) |
+| LLM | GPT-5.4 mini (OpenAI) |
 | Banco vetorial | Postgres + ParadeDB (`pgvector` + `pg_search`) |
 | Interface | Streamlit |
 
@@ -85,6 +85,22 @@ python src/core/embed.py
 
 Detalhes do schema e das consultas em [docs/embeddings.md](docs/embeddings.md).
 
+## Retrieval (chat RAG híbrido)
+
+Recupera os chunks mais relevantes no banco (busca vetorial + BM25 combinadas
+via Reciprocal Rank Fusion) e gera a resposta com o GPT-5.4 mini, orquestrado
+como uma chain LangChain. Requer o banco populado (etapas acima) e
+`OPENAI_API_KEY` no `.env`.
+
+```bash
+# teste manual interativo (loop de perguntas, com histórico da conversa)
+python src/core/retrieve.py
+```
+
+A lógica é exposta pela função única `answer(pergunta, historico)`, consumida
+pela interface (Streamlit). Detalhes da chain e do contrato em
+[docs/retrieve.md](docs/retrieve.md).
+
 ## Estrutura do projeto
 
 ```
@@ -101,7 +117,9 @@ bobby-sensei/
 │   └── init.sql        # habilita vector e pg_search no banco
 ├── docs/
 │   ├── extracao.md     # contrato dos dados brutos da extração
-│   └── embeddings.md   # schema da tabela chunks e consultas de referência
+│   ├── format.md       # estratégia de chunking e contrato dos chunks
+│   ├── embeddings.md   # schema da tabela chunks e consultas de referência
+│   └── retrieve.md     # chain RAG híbrida e contrato de answer()
 ├── pyproject.toml      # torna os pacotes de src/ instaláveis (pip install -e .)
 └── src/
     ├── app.py          # Streamlit: só UI, chama core/
