@@ -61,7 +61,7 @@ LLM_MODEL = "gpt-5.4-mini"
 # Quantos candidatos cada busca (vetorial e BM25) devolve antes da fusão, e
 # quantos chunks de contexto sobram no top-k final que vai pro prompt.
 TOP_K_EACH = 20
-TOP_K_FINAL = 5
+TOP_K_FINAL = 10
 # Constante do Reciprocal Rank Fusion. 60 é o valor clássico do paper
 # (Cormack et al., 2009): amortece o peso das primeiras posições sem deixar a
 # cauda dominar. Vale ajustar depois de medir com perguntas reais (passo 8).
@@ -274,6 +274,26 @@ def answer(pergunta: str, historico: list[dict] | None = None) -> str:
             "historico": _to_lc_messages(historico or []),
         }
     )
+
+
+_answer_chain = _prompt | _llm | StrOutputParser()
+
+
+def answer_with_chunks(
+    pergunta: str, historico: list[dict] | None = None
+) -> tuple[str, list[dict]]:
+    """Como `answer()`, mas também devolve os chunks recuperados (pra exibir
+    como fonte/anexo na UI). Roda o mesmo retrieval e a mesma chain de
+    geração, só expondo o resultado intermediário do `_hybrid_retrieve`."""
+    chunks = _hybrid_retrieve({"pergunta": pergunta})
+    resposta = _answer_chain.invoke(
+        {
+            "pergunta": pergunta,
+            "historico": _to_lc_messages(historico or []),
+            "contexto": _format_context(chunks),
+        }
+    )
+    return resposta, chunks
 
 
 if __name__ == "__main__":
