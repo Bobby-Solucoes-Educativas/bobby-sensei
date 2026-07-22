@@ -1,0 +1,20 @@
+[theme]
+primaryColor = "#3E7A0F"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EFFAE0"
+textColor = "#14171A"
+font = "baloo2"
+codeFont = "baloo2"
+headingFont = "baloo2"
+
+# O nome da família ("Baloo2") não pode ter espaço: o Streamlit 1.46 quebra a
+# resolução de `theme.font` quando o valor referencia uma família custom com
+# espaço no nome (testado: "Baloo 2" cai silenciosamente pro serif padrão do
+# navegador, sem erro no log nem no console). "Baloo2" é só o rótulo interno
+# do @font-face — não precisa bater com o nome oficial da fonte pra renderizar
+# certo.
+[[theme.fontFaces]]
+family = "Baloo2"
+url = "https://fonts.gstatic.com/s/baloo2/v23/wXKrE3kTposypRyd51jcAM4olXc.woff2"
+weight = "400 800"
+style = "normal"

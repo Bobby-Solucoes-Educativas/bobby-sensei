@@ -26,6 +26,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./data:/app/data
+      - ./.streamlit:/app/.streamlit
     depends_on:
       db:
         condition: service_healthy
