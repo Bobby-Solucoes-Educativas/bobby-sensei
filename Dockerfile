@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY pyproject.toml .
 COPY src/ ./src/
+COPY .streamlit/ ./.streamlit/
 # Instala os pacotes de src/ (core) no ambiente, tornando-os importáveis
 # de qualquer módulo sem manipulação de sys.path.
 RUN pip install --no-cache-dir -e .
