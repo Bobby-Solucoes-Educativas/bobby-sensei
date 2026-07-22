@@ -62,8 +62,11 @@ só encapsulada numa função (`_hybrid_retrieve`) e injetada na chain via
    al., 2009).
 
 Constantes ajustáveis no topo do arquivo: `TOP_K_EACH` (20), `TOP_K_FINAL`
-(5), `RRF_K` (60) — valores provisórios do MVP, a calibrar depois de testar
-com perguntas reais (critério de aceite do ticket).
+(10), `RRF_K` (60) — valores provisórios do MVP, a calibrar depois de testar
+com perguntas reais (critério de aceite do ticket). `TOP_K_FINAL` começou em
+5 e foi ajustado para 10 depois da validação ponta a ponta — mais chunks de
+contexto disponíveis tanto para o prompt do LLM quanto para a lista de
+fontes exibida pela interface (ver "Pontos de entrada públicos" abaixo).
 
 ## Prompt e histórico
 
@@ -80,7 +83,7 @@ que já foi dito nessa conversa" (permite perguntas de acompanhamento tipo "e
 o prazo disso?"); o contexto é recalculado do zero a cada pergunta, buscando
 de novo no banco.
 
-## Único ponto de entrada público (consumido pela TAI7-9)
+## Pontos de entrada públicos (consumidos pela TAI7-9)
 
 ```python
 def answer(pergunta: str, historico: list[dict] | None = None) -> str
@@ -91,8 +94,27 @@ def answer(pergunta: str, historico: list[dict] | None = None) -> str
   incluir a pergunta atual.
 - `historico=None` por default — turno 1 de uma conversa nova funciona sem
   passar nada.
-- Retorna a resposta como `str` puro — o `app.py` não precisa importar nada
+- Retorna a resposta como `str` puro — quem chama não precisa importar nada
   de `langchain_core`.
+
+```python
+def answer_with_chunks(
+    pergunta: str, historico: list[dict] | None = None
+) -> tuple[str, list[dict]]
+```
+
+Mesma assinatura de entrada de `answer()`, mas devolve também a lista de
+chunks que a fusão RRF recuperou (os mesmos dicts que `vector_search`/
+`bm25_search` retornam, com `rrf_score` adicionado) — usado pela interface
+pra exibir as fontes da resposta como anexo (ver `docs/chat-ui.md`, "5ª
+passada"). Roda o mesmo retrieval e a mesma sub-chain de geração de
+`answer()` (`_prompt | _llm | StrOutputParser()`, extraída para a constante
+de módulo `_answer_chain` pra ser reaproveitada entre as duas funções sem
+duplicar a definição) — só expõe o resultado intermediário do
+`_hybrid_retrieve` que `answer()` mantém interno.
+
+`answer()` continua existindo tal como antes (não foi alterada) para
+qualquer consumidor que só precise do texto da resposta.
 
 ## Fonte de dados: tabela `chunks` (TAI7-6)
 
@@ -115,8 +137,10 @@ seguem testáveis isoladamente sem banco:
 
 ## Observações para a próxima etapa (interface — TAI7-9)
 
-- Chamar só `answer(pergunta, historico)` — todo o resto (retrieval, prompt,
-  chain) é implementação interna do módulo.
+- Chamar `answer(pergunta, historico)` (só o texto) ou `answer_with_chunks(
+  pergunta, historico)` (texto + fontes, usado hoje pela interface pra
+  exibir os chunks como anexo) — todo o resto (retrieval, prompt, chain) é
+  implementação interna do módulo.
 - `historico` pode ser passado direto de `st.session_state.messages` (mesmo
   formato de dict), sem conversão manual.
 - A sintaxe de `bm25_search` (operador `@@@`, `paradedb.score()`) foi
