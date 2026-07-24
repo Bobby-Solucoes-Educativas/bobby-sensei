@@ -1,4 +1,6 @@
 streamlit==1.46.0
+pandas==2.3.3
+altair==5.5.0
 langchain==0.3.25
 langchain-openai==0.3.19
 openai==1.93.0

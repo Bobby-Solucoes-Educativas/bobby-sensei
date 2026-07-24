@@ -6,12 +6,13 @@ GREEN = "#3E7A0F"  # mesma família, mais escuro — botões/links (legível com
 GREEN_SOFT = "#EFFAE0"  # verde bem claro — fundos e hovers sutis
 WHITE = "#FFFFFF"
 BLACK = "#14171A"
+RED = "#DC3545"  # cor semântica (fora da marca) — feedback negativo em gráficos/dashboard
 
 # Fundo principal do app. Espelha `backgroundColor` em `.streamlit/config.toml`
 # — o config.toml é quem realmente pinta o fundo (tema nativo do Streamlit,
 # só lido na subida do processo), essa constante existe pra quem for injetar
 # CSS próprio (como app.py) usar o mesmo valor em vez de repetir o hex.
-BACKGROUND = "#D4D4D9"  # cinza claro do mascote — fundo do app, barra lateral e bolhas
+BACKGROUND = "#FFFFFF"  # cinza claro do mascote — fundo do app, barra lateral e bolhas
 
 
 def rgba(hex_color: str, alpha: float) -> str:
