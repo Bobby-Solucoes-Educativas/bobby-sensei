@@ -103,16 +103,21 @@ def render_sidebar(conversations: dict, conversation_order: list, active_id: str
 
         st.divider()
 
-        ordered_ids = sorted(conversation_order, key=lambda cid: not conversations[cid].pinned)
+        # Conversas sem mensagem ainda ficam de fora da lista: sem título,
+        # apareciam como um item "Nova conversa" destacado — visualmente
+        # parecia um segundo botão de criar, duplicando o "+ Novo chat" logo
+        # acima (era confuso, ainda mais como só item ativo na primeira visita).
+        ordered_ids = sorted(
+            (cid for cid in conversation_order if conversations[cid].messages),
+            key=lambda cid: not conversations[cid].pinned,
+        )
         for conversation_id in ordered_ids:
             conversation = conversations[conversation_id]
             with st.container(key=f"chat-row-{conversation_id}"):
                 col_title, col_menu = st.columns([6, 1], vertical_alignment="center")
 
                 with col_title:
-                    label = ("📌 " if conversation.pinned else "") + (
-                        conversation.title or "Nova conversa"
-                    )
+                    label = ("📌 " if conversation.pinned else "") + (conversation.title or "Conversa")
                     if st.button(
                         label,
                         key=f"select-{conversation_id}",
