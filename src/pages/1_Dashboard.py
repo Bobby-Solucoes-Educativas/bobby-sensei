@@ -17,6 +17,7 @@ from ui.dashboard import (
     render_negative_feedback,
     render_unanswered_questions,
 )
+from ui.sidebar import ensure_conversations_state, render_sidebar
 from ui.theme import BACKGROUND
 
 st.set_page_config(page_title="Dashboard · Bobby Sensei", page_icon="./src/icon/grafico-colorido.png", layout="wide")
@@ -26,6 +27,17 @@ st.markdown(
         [data-testid="stAppViewContainer"] {{ background-color: {BACKGROUND}; }}
     </style>""",
     unsafe_allow_html=True,
+)
+
+# Mesma sidebar do app.py (lista de conversas) — sem isso, o Streamlit
+# desenha o menu de navegação padrão (claro), e a sidebar "pisca" diferente
+# ao trocar de página. ensure_conversations_state() é o mesmo bootstrap que
+# app.py usa, pra funcionar mesmo se o usuário abrir o Dashboard direto.
+ensure_conversations_state()
+st.session_state.active_id = render_sidebar(
+    st.session_state.conversations,
+    st.session_state.conversation_order,
+    st.session_state.active_id,
 )
 
 st.title("📊 Dashboard de feedback")

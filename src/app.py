@@ -2,7 +2,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core.chat_state import Conversation, Message, add_message, new_conversation
+from core.chat_state import Conversation, Message, add_message
 from core.chatbot_core import answer_question
 from core.db import ensure_schema
 from core.persistence import save_conversation, save_message
@@ -12,7 +12,7 @@ from ui.chat_bubbles import (
     scroll_to_bottom,
 )
 from ui.feedback import render_feedback_widget
-from ui.sidebar import render_sidebar
+from ui.sidebar import ensure_conversations_state, render_sidebar
 from ui.theme import BACKGROUND
 from ui.thinking import inject_thinking_styles, png_data_uri, thinking_indicator
 
@@ -51,23 +51,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if "conversations" not in st.session_state:
-    st.session_state.conversations = {}
-    st.session_state.conversation_order = []
-    st.session_state.active_id = None
-
-
-def _start_new_conversation() -> None:
-    """Cria uma conversa e a torna ativa (usado no bootstrap e após excluir a ativa)."""
-
-    conversation = new_conversation()
-    st.session_state.conversations[conversation.id] = conversation
-    st.session_state.conversation_order.insert(0, conversation.id)
-    st.session_state.active_id = conversation.id
-
-
-if st.session_state.active_id is None:
-    _start_new_conversation()
+ensure_conversations_state()
 
 st.session_state.active_id = render_sidebar(
     st.session_state.conversations,
@@ -75,8 +59,7 @@ st.session_state.active_id = render_sidebar(
     st.session_state.active_id,
 )
 
-if st.session_state.active_id is None:
-    _start_new_conversation()
+ensure_conversations_state()
 
 active_conversation = st.session_state.conversations[st.session_state.active_id]
 

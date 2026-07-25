@@ -60,6 +60,26 @@ div[class*="st-key-chat-row-"]:hover [data-testid="stPopover"] {{
 </style>"""
 
 
+def ensure_conversations_state() -> None:
+    """Garante que `st.session_state` tem conversations/conversation_order/
+    active_id prontos, criando uma conversa vazia se não houver nenhuma ativa.
+
+    Compartilhado entre app.py e pages/1_Dashboard.py — as duas páginas
+    precisam do mesmo bootstrap pra desenhar a mesma sidebar (era o motivo da
+    sidebar mudar de aparência entre as views: só o app.py fazia isso antes)."""
+
+    if "conversations" not in st.session_state:
+        st.session_state.conversations = {}
+        st.session_state.conversation_order = []
+        st.session_state.active_id = None
+
+    if st.session_state.active_id is None:
+        conversation = new_conversation()
+        st.session_state.conversations[conversation.id] = conversation
+        st.session_state.conversation_order.insert(0, conversation.id)
+        st.session_state.active_id = conversation.id
+
+
 def render_sidebar(conversations: dict, conversation_order: list, active_id: str | None) -> str | None:
     """Desenha a barra lateral (novo chat + lista) e devolve o id da conversa ativa.
 
