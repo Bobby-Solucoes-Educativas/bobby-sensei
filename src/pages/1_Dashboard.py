@@ -20,7 +20,7 @@ from ui.dashboard import (
 from ui.sidebar import ensure_conversations_state, render_sidebar
 from ui.theme import BACKGROUND
 
-st.set_page_config(page_title="Dashboard · Bobby Sensei", page_icon="./src/icon/grafico-colorido.png", layout="wide")
+st.set_page_config(page_title="Dashboard · Bobby Sensei", page_icon="./src/icon/Logo.png", layout="wide")
 
 st.markdown(
     f"""<style>
@@ -34,11 +34,17 @@ st.markdown(
 # ao trocar de página. ensure_conversations_state() é o mesmo bootstrap que
 # app.py usa, pra funcionar mesmo se o usuário abrir o Dashboard direto.
 ensure_conversations_state()
+id_antes_do_clique = st.session_state.active_id
 st.session_state.active_id = render_sidebar(
     st.session_state.conversations,
     st.session_state.conversation_order,
     st.session_state.active_id,
 )
+# "+ Novo chat"/selecionar uma conversa aqui só troca o active_id — sem
+# navegar de volta, o clique parecia não fazer nada (o Dashboard não mostra
+# mensagem nenhuma). Manda pra tela do chat pra já ver o efeito do clique.
+if st.session_state.active_id != id_antes_do_clique:
+    st.switch_page("app.py")
 
 st.title("📊 Dashboard de feedback")
 st.caption("Volume de perguntas, avaliação das respostas e onde a documentação está falha.")
