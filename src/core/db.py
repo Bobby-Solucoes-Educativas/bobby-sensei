@@ -35,6 +35,39 @@ _SCHEMA_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS chunks_page_id_idx ON chunks (page_id)
     """,
+    # TAI7-12: conversas/mensagens/feedback — histórico do chat e classificação
+    # (👍/👎 + comentário) das respostas, base do dashboard de validação do MVP.
+    """
+    CREATE TABLE IF NOT EXISTS conversas (
+        id          text PRIMARY KEY,
+        title       text,
+        created_at  timestamptz NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS mensagens (
+        id               text PRIMARY KEY,
+        conversation_id  text NOT NULL REFERENCES conversas (id) ON DELETE CASCADE,
+        role             text NOT NULL CHECK (role IN ('user', 'assistant')),
+        content          text NOT NULL,
+        chunks           jsonb NOT NULL DEFAULT '[]',
+        reply_to         text REFERENCES mensagens (id) ON DELETE SET NULL,
+        created_at       timestamptz NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS mensagens_conversation_id_idx
+        ON mensagens (conversation_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS feedback (
+        id          serial PRIMARY KEY,
+        message_id  text NOT NULL UNIQUE REFERENCES mensagens (id) ON DELETE CASCADE,
+        rating      text NOT NULL CHECK (rating IN ('up', 'down')),
+        comment     text,
+        created_at  timestamptz NOT NULL DEFAULT now()
+    )
+    """,
 )
 
 

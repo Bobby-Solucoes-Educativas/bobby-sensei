@@ -137,6 +137,12 @@ reiniciar (`docker compose restart app`), não hot-reloada como um `.py`. O
 `docker-compose.yml` precisa montar `./.streamlit:/app/.streamlit` (não
 teria efeito no container sem isso).
 
+## Feedback e dashboard (TAI7-12)
+
+Cada resposta do assistente persiste no Postgres/ParadeDB e ganha um
+controle 👍/👎 + comentário opcional (`ui/feedback.py`), lido por uma
+página de dashboard (`pages/1_Dashboard.py`) — ver `docs/feedback-dashboard.md`.
+
 Dois pontos que exigiram CSS além do `config.toml`:
 - O botão da conversa ativa (`type="primary"`, fundo `LIME`) precisa de uma
   regra mirando o `<p>` interno com `!important` — o CSS base do Streamlit

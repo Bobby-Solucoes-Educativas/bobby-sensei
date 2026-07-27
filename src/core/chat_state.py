@@ -11,6 +11,7 @@ class Message:
     role: str
     content: str
     chunks: list[dict] = field(default_factory=list)
+    id: str = field(default_factory=lambda: uuid4().hex)
 
 
 @dataclass

@@ -53,29 +53,6 @@ def render_assistant_message(text: str, chunks: list[dict] | None = None) -> Non
     st.markdown('<div style="margin-bottom:14px;"></div>', unsafe_allow_html=True)
 
 
-def render_loading_message() -> None:
-    """Indicador de 'digitando', desenhado do lado do assistente (esquerda)
-    enquanto o retrieval + LLM rodam. Some sozinho no próximo rerun, quando
-    vira a resposta de verdade."""
-
-    st.markdown(
-        f"""<div style="display:flex; align-items:center; gap:10px; margin:6px 0 14px 0;">
-            <div style="
-                width:16px; height:16px;
-                border:2.5px solid {rgba(GREEN, 0.25)};
-                border-top-color:{GREEN};
-                border-radius:50%;
-                animation:bobby-sensei-spin 0.8s linear infinite;
-            "></div>
-            <span style="opacity:0.7;">Bobby Sensei está buscando na documentação...</span>
-        </div>
-        <style>
-            @keyframes bobby-sensei-spin {{ to {{ transform:rotate(360deg); }} }}
-        </style>""",
-        unsafe_allow_html=True,
-    )
-
-
 def scroll_to_bottom() -> None:
     """Rola a tela pro fim da conversa. Chamado a cada rerun, depois de
     desenhar as mensagens, pra acompanhar tanto a mensagem nova do usuário

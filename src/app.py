@@ -1,17 +1,44 @@
+from pathlib import Path
+
 import streamlit as st
 
-from core.chat_state import add_message, new_conversation
+from core.chat_state import Conversation, Message, add_message
 from core.chatbot_core import answer_question
+from core.db import ensure_schema
+from core.persistence import save_conversation, save_message
 from ui.chat_bubbles import (
     render_assistant_message,
-    render_loading_message,
     render_user_message,
     scroll_to_bottom,
 )
-from ui.sidebar import render_sidebar
+from ui.feedback import render_feedback_widget
+from ui.sidebar import ensure_conversations_state, render_sidebar
 from ui.theme import BACKGROUND
+from ui.thinking import inject_thinking_styles, png_data_uri, thinking_indicator
 
 st.set_page_config(page_title="Bobby Sensei", page_icon="./src/icon/Logo.png", layout="wide")
+inject_thinking_styles()
+
+
+@st.cache_resource
+def _ensure_schema_once() -> None:
+    """Cria as tabelas (chunks, conversas, mensagens, feedback) se ainda não
+    existirem. `st.cache_resource` garante uma única chamada por processo,
+    não uma a cada rerun do script."""
+
+    ensure_schema()
+
+
+_ensure_schema_once()
+
+
+def _persist(conversation: Conversation, message: Message, reply_to: str | None = None) -> None:
+    """Salva a conversa e a mensagem recém-adicionada (TAI7-12: histórico
+    persistido pra alimentar o dashboard de feedback)."""
+
+    save_conversation(conversation.id, conversation.title)
+    save_message(message.id, conversation.id, message.role, message.content, message.chunks, reply_to)
+
 
 st.markdown(
     f"""<style>
@@ -24,23 +51,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if "conversations" not in st.session_state:
-    st.session_state.conversations = {}
-    st.session_state.conversation_order = []
-    st.session_state.active_id = None
-
-
-def _start_new_conversation() -> None:
-    """Cria uma conversa e a torna ativa (usado no bootstrap e após excluir a ativa)."""
-
-    conversation = new_conversation()
-    st.session_state.conversations[conversation.id] = conversation
-    st.session_state.conversation_order.insert(0, conversation.id)
-    st.session_state.active_id = conversation.id
-
-
-if st.session_state.active_id is None:
-    _start_new_conversation()
+ensure_conversations_state()
 
 st.session_state.active_id = render_sidebar(
     st.session_state.conversations,
@@ -48,16 +59,19 @@ st.session_state.active_id = render_sidebar(
     st.session_state.active_id,
 )
 
-if st.session_state.active_id is None:
-    _start_new_conversation()
+ensure_conversations_state()
 
 active_conversation = st.session_state.conversations[st.session_state.active_id]
 
 if not active_conversation.messages:
+    # Reaproveita a versão já reduzida da logo (mesma usada no indicador de
+    # "pensando") em vez do Logo.png original (1330x1098px) — evita embutir
+    # esse tanto de base64 na tela de boas-vindas a cada rerun.
+    logo_uri = png_data_uri(str(Path(__file__).resolve().parent / "icon" / "logo-thinking.png"))
     st.markdown(
-        """<div style="display:flex; flex-direction:column; align-items:center;
+        f"""<div style="display:flex; flex-direction:column; align-items:center;
         justify-content:center; text-align:center; padding-top:16vh;">
-            <div style="font-size:2.5rem;">🤖</div>
+            <img src="{logo_uri}" alt="" style="height:110px; width:auto; margin-bottom:0.5rem;" />
             <h1 style="margin:0.3rem 0;">Bobby Sensei</h1>
             <p style="opacity:0.7; font-size:1.05rem;">
                 Assistente Pessoal da Bobby
@@ -73,17 +87,21 @@ else:
             render_user_message(message.content)
         else:
             render_assistant_message(message.content, message.chunks)
+            render_feedback_widget(message)
 
     # A última mensagem sem resposta ainda é a pergunta recém-enviada pelo
     # usuário (ver bloco do chat_input abaixo, que só adiciona a mensagem do
     # usuário e dá rerun) — busca e gera a resposta agora, com o indicador de
-    # carregamento já desenhado na tela antes da chamada bloqueante ao RAG.
+    # "pensando" (logo respirando) já desenhado na tela antes da chamada
+    # bloqueante ao RAG.
     if active_conversation.messages[-1].role == "user":
-        render_loading_message()
-        scroll_to_bottom()
-        pergunta = active_conversation.messages[-1].content
-        resposta, chunks = answer_question(pergunta)
+        pergunta_message = active_conversation.messages[-1]
+        thinking_placeholder = st.empty()
+        with thinking_indicator(thinking_placeholder):
+            scroll_to_bottom()
+            resposta, chunks = answer_question(pergunta_message.content)
         add_message(active_conversation, "assistant", resposta, chunks)
+        _persist(active_conversation, active_conversation.messages[-1], reply_to=pergunta_message.id)
         st.rerun()
 
 scroll_to_bottom()
@@ -91,4 +109,5 @@ scroll_to_bottom()
 question = st.chat_input("Digite sua pergunta...")
 if question:
     add_message(active_conversation, "user", question)
+    _persist(active_conversation, active_conversation.messages[-1])
     st.rerun()
