@@ -1,9 +1,13 @@
-CREATE EXTENSION IF NOT EXISTS vector;      -- pgvector (busca vetorial)
-CREATE EXTENSION IF NOT EXISTS pg_search;   -- ParadeDB / BM25 (Tantivy)
+-- 001_feedback.sql
+-- Substitui o schema ad-hoc de conversas/mensagens/feedback criado por
+-- core/db.py (ensure_schema) pela modelagem definitiva da TAI7-13
+-- (bigint identity ids, atendente/session_id, papel/bot_respondeu/fontes,
+-- positivo/comentario/atualizada_em). Os DROPs cobrem os bancos onde essas
+-- tabelas já existiam no schema antigo.
+DROP TABLE IF EXISTS feedback CASCADE;
+DROP TABLE IF EXISTS mensagens CASCADE;
+DROP TABLE IF EXISTS conversas CASCADE;
 
--- TAI7-13: histórico de conversas/mensagens e feedback (👍/👎).
--- Mesma modelagem de db/migrations/001_feedback.sql, para ambientes novos
--- já subirem com as tabelas prontas.
 CREATE TABLE conversas (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     criada_em   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -31,6 +35,8 @@ CREATE TABLE feedback (
     atualizada_em  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Índices
 CREATE INDEX idx_mensagens_conversa   ON mensagens (conversa_id);
 CREATE INDEX idx_mensagens_criada_em  ON mensagens (criada_em);
 CREATE INDEX idx_mensagens_nao_resp   ON mensagens (id) WHERE bot_respondeu = false;
+-- feedback.mensagem_id já tem índice por ser UNIQUE
