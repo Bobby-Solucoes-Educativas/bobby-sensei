@@ -278,13 +278,30 @@ def answer(pergunta: str, historico: list[dict] | None = None) -> str:
 
 _answer_chain = _prompt | _llm | StrOutputParser()
 
+# Nenhum LLM devolve um campo estruturado dizendo "não sei" — o _SYSTEM_PROMPT
+# acima pede pro modelo dizer que não encontrou a informação quando o
+# contexto for insuficiente, e é isso que detectamos aqui pra alimentar
+# `bot_respondeu` (TAI7-14/TAI7-13). Mesma heurística que já existia em
+# core/dashboard_data.py, só que agora calculada na hora da resposta.
+_MARCADORES_NAO_RESPONDIDO = (
+    "não encontr",
+    "não há informa",
+    "não tenho essa informa",
+)
+
+
+def _bot_respondeu(resposta: str) -> bool:
+    texto = resposta.lower()
+    return not any(marcador in texto for marcador in _MARCADORES_NAO_RESPONDIDO)
+
 
 def answer_with_chunks(
     pergunta: str, historico: list[dict] | None = None
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], bool]:
     """Como `answer()`, mas também devolve os chunks recuperados (pra exibir
-    como fonte/anexo na UI). Roda o mesmo retrieval e a mesma chain de
-    geração, só expondo o resultado intermediário do `_hybrid_retrieve`."""
+    como fonte/anexo na UI) e se o bot conseguiu responder (pra persistir em
+    `mensagens.bot_respondeu`, TAI7-14). Roda o mesmo retrieval e a mesma
+    chain de geração, só expondo o resultado intermediário do `_hybrid_retrieve`."""
     chunks = _hybrid_retrieve({"pergunta": pergunta})
     resposta = _answer_chain.invoke(
         {
@@ -293,7 +310,7 @@ def answer_with_chunks(
             "contexto": _format_context(chunks),
         }
     )
-    return resposta, chunks
+    return resposta, chunks, _bot_respondeu(resposta)
 
 
 if __name__ == "__main__":
