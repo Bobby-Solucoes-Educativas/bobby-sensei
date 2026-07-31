@@ -1,13 +1,16 @@
 -- 001_feedback.sql
--- Substitui o schema ad-hoc de conversas/mensagens/feedback criado por
--- core/db.py (ensure_schema) pela modelagem definitiva da TAI7-13
--- (bigint identity ids, atendente/session_id, papel/bot_respondeu/fontes,
--- positivo/comentario/atualizada_em). Os DROPs cobrem os bancos onde essas
--- tabelas já existiam no schema antigo.
-DROP TABLE IF EXISTS feedback CASCADE;
-DROP TABLE IF EXISTS mensagens CASCADE;
-DROP TABLE IF EXISTS conversas CASCADE;
-
+-- Cria o schema definitivo da TAI7-13 (bigint identity ids, atendente/
+-- session_id, papel/bot_respondeu/fontes, positivo/comentario/
+-- atualizada_em) num banco/destino que ainda não tem essas tabelas.
+--
+-- IMPORTANTE: este arquivo NÃO dá DROP nas tabelas antigas. Uma versão
+-- anterior deste script tinha `DROP TABLE ... CASCADE` no início — isso
+-- teria apagado, sem chance de volta, todo o histórico de conversas/
+-- feedback que o time de CS já gerou usando o prod atual (schema antigo
+-- da TAI7-12). Removido de propósito (2026-07-31): ver migração dos dados
+-- legados em scripts/migracao_tai7_13/. Rodar este arquivo direto contra
+-- um banco que ainda tem as tabelas antigas vai falhar com "already
+-- exists" — é o comportamento esperado, não um bug.
 CREATE TABLE conversas (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     criada_em   TIMESTAMPTZ NOT NULL DEFAULT now(),
