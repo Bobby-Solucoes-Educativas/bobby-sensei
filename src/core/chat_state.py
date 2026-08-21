@@ -12,6 +12,10 @@ class Message:
     content: str
     chunks: list[dict] = field(default_factory=list)
     id: str = field(default_factory=lambda: uuid4().hex)
+    # id da linha em `mensagens` (TAI7-13/14) — None até a persistência
+    # (core.feedback.salvar_mensagem) rodar; ui/feedback.py precisa dele pra
+    # registrar o voto na mensagem certa.
+    db_id: int | None = None
 
 
 @dataclass
@@ -20,6 +24,8 @@ class Conversation:
     title: str | None = None
     messages: list[Message] = field(default_factory=list)
     pinned: bool = False
+    # id da linha em `conversas` — None até a 1ª mensagem ser persistida.
+    db_id: int | None = None
 
 
 def new_conversation() -> Conversation:
