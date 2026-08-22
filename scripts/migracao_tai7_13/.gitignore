@@ -1,7 +1,0 @@
-# CSVs gerados por extrair_legado.py — nunca versionar. Quando isso rodar
-# contra o dump real, vai conter dado real do CS (conversas, feedback,
-# comentários). Mesmo os de teste com dado sintético não têm por que
-# ficar no repo.
-csv_legado/
-csv_prod_real/
-csv_*/

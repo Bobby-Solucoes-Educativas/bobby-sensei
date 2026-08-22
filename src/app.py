@@ -5,7 +5,7 @@ import streamlit as st
 from core.chat_state import Conversation, Message, add_message
 from core.chatbot_core import answer_question
 from core.db import ensure_schema
-from core.feedback import criar_conversa, salvar_mensagem
+from core.persistence import save_conversation, save_message
 from ui.chat_bubbles import (
     render_assistant_message,
     render_user_message,
@@ -32,19 +32,12 @@ def _ensure_schema_once() -> None:
 _ensure_schema_once()
 
 
-_PAPEL_POR_ROLE = {"user": "usuario", "assistant": "assistente"}
+def _persist(conversation: Conversation, message: Message, reply_to: str | None = None) -> None:
+    """Salva a conversa e a mensagem recém-adicionada (TAI7-12: histórico
+    persistido pra alimentar o dashboard de feedback)."""
 
-
-def _persist(conversation: Conversation, message: Message, bot_respondeu: bool | None = None) -> None:
-    """Salva a conversa (na 1ª mensagem) e a mensagem recém-adicionada
-    (TAI7-13/14: histórico persistido pra alimentar o dashboard de feedback)."""
-
-    if conversation.db_id is None:
-        conversation.db_id = criar_conversa(session_id=conversation.id)
-
-    papel = _PAPEL_POR_ROLE[message.role]
-    fontes = message.chunks if papel == "assistente" and message.chunks else None
-    message.db_id = salvar_mensagem(conversation.db_id, papel, message.content, bot_respondeu, fontes)
+    save_conversation(conversation.id, conversation.title)
+    save_message(message.id, conversation.id, message.role, message.content, message.chunks, reply_to)
 
 
 st.markdown(
@@ -106,9 +99,9 @@ else:
         thinking_placeholder = st.empty()
         with thinking_indicator(thinking_placeholder):
             scroll_to_bottom()
-            resposta, chunks, bot_respondeu = answer_question(pergunta_message.content)
+            resposta, chunks = answer_question(pergunta_message.content)
         add_message(active_conversation, "assistant", resposta, chunks)
-        _persist(active_conversation, active_conversation.messages[-1], bot_respondeu=bot_respondeu)
+        _persist(active_conversation, active_conversation.messages[-1], reply_to=pergunta_message.id)
         st.rerun()
 
 scroll_to_bottom()

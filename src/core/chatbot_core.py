@@ -9,15 +9,14 @@ _UNAVAILABLE_ANSWER = (
 )
 
 
-def answer_question(question: str) -> tuple[str, list[dict], bool]:
+def answer_question(question: str) -> tuple[str, list[dict]]:
     """Responde a pergunta via RAG híbrido; cai num aviso se o backend falhar.
 
-    Devolve a resposta, os chunks recuperados que a embasaram (pra exibir
-    como fonte/anexo na UI) e se o bot conseguiu responder (`bot_respondeu`,
-    TAI7-14); em caso de falha, chunks vem vazio e bot_respondeu é False.
+    Devolve a resposta e os chunks recuperados que a embasaram (pra exibir
+    como fonte/anexo na UI); em caso de falha, chunks vem vazio.
     """
 
     try:
         return answer_with_chunks(question)
     except Exception:
-        return _UNAVAILABLE_ANSWER.format(question=question), [], False
+        return _UNAVAILABLE_ANSWER.format(question=question), []

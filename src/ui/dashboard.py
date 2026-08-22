@@ -329,12 +329,12 @@ def render_negative_feedback(items: list[dict]) -> None:
 
 
 def render_unanswered_questions(items: list[dict]) -> None:
-    """Perguntas cuja resposta tem `bot_respondeu = false` (ver
-    core.retrieve._bot_respondeu, TAI7-14)."""
+    """Perguntas cuja resposta bateu com a heurística de "não soube
+    responder" (ver core.dashboard_data._MARCADORES_NAO_RESPONDIDO)."""
 
     st.caption(
-        'Marcado com base em frases como "não encontrei"/indisponibilidade na '
-        "resposta — vale revisar manualmente, não é um classificador exato."
+        'Heurística baseada em frases como "não encontrei"/indisponibilidade — '
+        "revisar manualmente, não é um classificador exato."
     )
     if not items:
         st.caption("Nenhuma pergunta sem resposta detectada até agora.")

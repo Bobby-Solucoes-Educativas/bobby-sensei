@@ -1,6 +1,6 @@
-# TAI7-12/14: barra de ações (👍/👎 + comentário, copiar) abaixo de cada
-# resposta do assistente. Desenha e liga aos cliques; a persistência em si é
-# `core.feedback.registrar_feedback` (mesmo padrão de ui/sidebar.py com
+# TAI7-12: barra de ações (👍/👎 + comentário, copiar) abaixo de cada resposta
+# do assistente. Desenha e liga aos cliques; a persistência em si é
+# `core.persistence.save_feedback` (mesmo padrão de ui/sidebar.py com
 # core/chat_state.py). Copiar é 100% client-side (sem round-trip ao Streamlit).
 import base64
 from pathlib import Path
@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core.chat_state import Message
-from core.feedback import registrar_feedback
+from core.persistence import save_feedback
 from ui.theme import BLACK, GREEN, WHITE, rgba
 
 _ICONS_DIR = Path(__file__).resolve().parent.parent / "icon"
@@ -146,7 +146,7 @@ def render_feedback_widget(message: Message) -> None:
         col_up, col_down, col_copy = st.columns(3)
         with col_up:
             if st.button(" ", key=up_key, type="primary" if state["rating"] == "up" else "secondary"):
-                registrar_feedback(message.db_id, True)
+                save_feedback(message.id, "up")
                 st.session_state.feedback_state[message.id] = {"rating": "up", "sent": True}
                 st.rerun()
         with col_down:
@@ -155,7 +155,7 @@ def render_feedback_widget(message: Message) -> None:
                 # e dependia do clique em "Enviar feedback" pra persistir; se
                 # o usuário saísse sem mandar comentário, o voto negativo
                 # nunca ia pro banco (bug real, confirmado com teste).
-                registrar_feedback(message.db_id, False)
+                save_feedback(message.id, "down")
                 st.session_state.feedback_state[message.id] = {"rating": "down", "sent": True}
                 st.rerun()
         with col_copy:
@@ -167,7 +167,7 @@ def render_feedback_widget(message: Message) -> None:
             key=f"fb-comment-{message.id}",
         )
         if st.button("Enviar feedback", key=f"fb-send-{message.id}"):
-            registrar_feedback(message.db_id, False, comment.strip() or None)
+            save_feedback(message.id, "down", comment.strip() or None)
             st.session_state.feedback_state[message.id]["sent"] = True
             st.rerun()
 
