@@ -22,9 +22,12 @@ inject_thinking_styles()
 
 @st.cache_resource
 def _ensure_schema_once() -> None:
-    """Cria as tabelas (chunks, conversas, mensagens, feedback) se ainda não
-    existirem. `st.cache_resource` garante uma única chamada por processo,
-    não uma a cada rerun do script."""
+    """Executa o bootstrap idempotente do schema uma vez por processo.
+
+    O runner aplica as migrations em `db/migrations/`, então banco novo e
+    volume reaproveitado usam a mesma fonte de verdade sem recriar objetos já
+    existentes.
+    """
 
     ensure_schema()
 
