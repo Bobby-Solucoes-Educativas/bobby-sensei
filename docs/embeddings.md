@@ -18,22 +18,23 @@ Pré-requisitos:
 python src/core/embed.py
 ```
 
-O script cria a tabela/índices se não existirem (`db.ensure_schema()`), gera os
-embeddings em lotes e recarrega a tabela. Rodada de referência: 2.289 chunks de
-378 páginas, ~5 chamadas à API, custo da ordem de centavos.
+O script chama `db.ensure_schema()` no startup, que aplica as migrations
+pendentes em `db/migrations/` e garante o schema base antes de gerar os
+embeddings em lotes e recarregar a tabela. Rodada de referência: 2.289 chunks
+de 378 páginas, ~5 chamadas à API, custo da ordem de centavos.
 
 ## Tabela `chunks`
 
 Uma linha por chunk, espelhando o `chunks.jsonl` + o embedding:
 
-| Coluna | Tipo | Origem/observação |
-|---|---|---|
-| `chunk_id` | text (PK) | `{page_id}-{chunk_index}`, vem da formatação. |
-| `page_id`, `title`, `url`, `parent_id`, `breadcrumb`, `chunk_index` | text/int | Metadados da página de origem (formatação). |
-| `text` | text | Texto do chunk, já com breadcrumb prefixado — é o que foi embeddado. |
-| `ancestors`, `attachments` | jsonb | Estrutura preservada da formatação. |
-| `embedding` | vector(1536) | `text-embedding-3-small`, dimensão nativa, sem truncamento. |
-| `embedded_at` | timestamptz | Quando o chunk foi carregado. |
+| Coluna                                                              | Tipo         | Origem/observação                                                    |
+| ------------------------------------------------------------------- | ------------ | -------------------------------------------------------------------- |
+| `chunk_id`                                                          | text (PK)    | `{page_id}-{chunk_index}`, vem da formatação.                        |
+| `page_id`, `title`, `url`, `parent_id`, `breadcrumb`, `chunk_index` | text/int     | Metadados da página de origem (formatação).                          |
+| `text`                                                              | text         | Texto do chunk, já com breadcrumb prefixado — é o que foi embeddado. |
+| `ancestors`, `attachments`                                          | jsonb        | Estrutura preservada da formatação.                                  |
+| `embedding`                                                         | vector(1536) | `text-embedding-3-small`, dimensão nativa, sem truncamento.          |
+| `embedded_at`                                                       | timestamptz  | Quando o chunk foi carregado.                                        |
 
 Índices:
 

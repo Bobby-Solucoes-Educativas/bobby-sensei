@@ -7,8 +7,8 @@ dashboard no próprio Streamlit lendo esses dados.
 
 ## Tabelas (`core/db.py`)
 
-Criadas por `ensure_schema()` (chamada uma vez por processo em `app.py`,
-via `st.cache_resource`):
+Criadas por `ensure_schema()` (chamada uma vez por processo em `app.py`, via
+`st.cache_resource`), que aplica as migrations pendentes em `db/migrations/`:
 
 - `conversas (id, title, created_at)`
 - `mensagens (id, conversation_id -> conversas, role, content, chunks, reply_to -> mensagens, created_at)`

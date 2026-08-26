@@ -71,6 +71,7 @@ fontes exibida pela interface (ver "Pontos de entrada públicos" abaixo).
 ## Prompt e histórico
 
 `ChatPromptTemplate` com três blocos, nesta ordem:
+
 1. **system** (`_SYSTEM_PROMPT`, fixo): instrui a responder só com o
    contexto fornecido, em português, e admitir quando a documentação não
    cobre a pergunta.
@@ -121,13 +122,16 @@ qualquer consumidor que só precise do texto da resposta.
 `_hybrid_retrieve` consulta a tabela `chunks` populada pela TAI7-6
 (`embed.py`), com os campos produzidos pelo `format.py` (ver `docs/format.md`)
 mais a coluna de embedding. O schema e os índices (HNSW vetorial + BM25 do
-ParadeDB) são criados por `db.ensure_schema()` — a referência autoritativa é
-`src/core/db.py`; detalhes e consultas em `docs/embeddings.md`.
+ParadeDB) entram via `db.ensure_schema()`, que aplica as migrations pendentes
+em `db/migrations/`; a migration base está em
+`db/migrations/0001_initial_schema.sql`. Detalhes e consultas em
+`docs/embeddings.md`.
 
 O pipeline foi validado ponta a ponta contra o banco real (2.289 chunks de
 378 páginas): busca vetorial, busca BM25, fusão RRF e geração respondem
 usando o contexto recuperado, citando a página de origem. As partes puras
 seguem testáveis isoladamente sem banco:
+
 - `reciprocal_rank_fusion` (função pura, com listas de chunks fabricadas)
 - `_format_context` (função pura)
 - A sub-chain `_prompt | _llm | StrOutputParser()` isolada, invocada
@@ -138,7 +142,7 @@ seguem testáveis isoladamente sem banco:
 ## Observações para a próxima etapa (interface — TAI7-9)
 
 - Chamar `answer(pergunta, historico)` (só o texto) ou `answer_with_chunks(
-  pergunta, historico)` (texto + fontes, usado hoje pela interface pra
+pergunta, historico)` (texto + fontes, usado hoje pela interface pra
   exibir os chunks como anexo) — todo o resto (retrieval, prompt, chain) é
   implementação interna do módulo.
 - `historico` pode ser passado direto de `st.session_state.messages` (mesmo
