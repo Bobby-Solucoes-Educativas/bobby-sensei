@@ -310,6 +310,24 @@ def render_recent_comments(comments: list[dict]) -> None:
         )
 
 
+def _render_historico_mensagem(m: dict) -> None:
+    """Desenha um turno do histórico (pergunta ou resposta) e, se for
+    resposta do assistente, os trechos da documentação consultados — mesmo
+    conteúdo mostrado no chat (ui/chat_bubbles.render_assistant_message), só
+    sem `st.expander` (não dá pra aninhar expander dentro de expander)."""
+
+    rotulo = "🧑 Usuário" if m["papel"] == "usuario" else "🤖 Assistente"
+    st.markdown(f"**{rotulo}:**\n\n{m['conteudo']}")
+    fontes = m.get("fontes") or []
+    if fontes:
+        st.caption(f"📎 {len(fontes)} trecho(s) da documentação consultados:")
+        for i, chunk in enumerate(fontes, start=1):
+            fonte = chunk.get("breadcrumb") or chunk.get("title") or "documento"
+            url = chunk.get("url")
+            st.caption(f"[{i}] {fonte}" + (f" — {url}" if url else ""))
+    st.divider()
+
+
 def render_negative_feedback(items: list[dict]) -> None:
     """Lista dos 👎, cada um em um expander mostrando o histórico inteiro da
     conversa até a resposta avaliada (não só a pergunta imediata) + o
@@ -326,9 +344,7 @@ def render_negative_feedback(items: list[dict]) -> None:
 
         with st.expander(f"🗨️ {titulo}"):
             for m in historico:
-                rotulo = "🧑 Usuário" if m["papel"] == "usuario" else "🤖 Assistente"
-                st.markdown(f"**{rotulo}:**\n\n{m['conteudo']}")
-                st.divider()
+                _render_historico_mensagem(m)
             if item["comentario"]:
                 st.markdown(f"**Comentário:** {item['comentario']}")
             else:
@@ -355,7 +371,5 @@ def render_unanswered_questions(items: list[dict]) -> None:
 
         with st.expander(f"❓ {titulo}"):
             for m in historico:
-                rotulo = "🧑 Usuário" if m["papel"] == "usuario" else "🤖 Assistente"
-                st.markdown(f"**{rotulo}:**\n\n{m['conteudo']}")
-                st.divider()
+                _render_historico_mensagem(m)
             st.caption(f"Em {item['criada_em']:%d/%m/%Y %H:%M}")

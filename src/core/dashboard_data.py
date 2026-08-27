@@ -54,7 +54,7 @@ def listar_negativos() -> list[dict]:
         JOIN mensagens resposta ON resposta.id = f.mensagem_id
         JOIN LATERAL (
             SELECT json_agg(
-                json_build_object('papel', m.papel, 'conteudo', m.conteudo)
+                json_build_object('papel', m.papel, 'conteudo', m.conteudo, 'fontes', m.fontes)
                 ORDER BY m.criada_em
             ) AS historico
             FROM mensagens m
@@ -82,7 +82,7 @@ def listar_nao_respondidas() -> list[dict]:
         FROM mensagens resposta
         JOIN LATERAL (
             SELECT json_agg(
-                json_build_object('papel', m.papel, 'conteudo', m.conteudo)
+                json_build_object('papel', m.papel, 'conteudo', m.conteudo, 'fontes', m.fontes)
                 ORDER BY m.criada_em
             ) AS historico
             FROM mensagens m
