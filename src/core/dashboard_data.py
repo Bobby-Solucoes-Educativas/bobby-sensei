@@ -1,4 +1,4 @@
-# TAI7-12/TAI7-15: consultas de leitura para o dashboard de feedback/histórico.
+# TAI7-14/TAI7-15: consultas de leitura para o dashboard de feedback/histórico.
 # Funções puras, sem streamlit — devolvem list[dict]/dict; quem desenha é
 # ui/dashboard.py (via pages/1_Dashboard.py).
 import calendar
@@ -11,7 +11,7 @@ from psycopg.rows import dict_row
 # agrupamento "por dia" (e o reset mensal) usa a meia-noite UTC em vez da de
 # Brasília: um feedback dado às 22h já cairia no dia seguinte no dashboard
 # (bug real, confirmado — ver histórico). `AT TIME ZONE` no SQL converte
-# `created_at` pro horário local antes de truncar por dia.
+# `criada_em` pro horário local antes de truncar por dia.
 _TZ = ZoneInfo("America/Sao_Paulo")
 _TZ_NAME = "America/Sao_Paulo"
 
@@ -20,118 +20,109 @@ try:
 except ImportError:
     from db import get_connection
 
-# Heurística de "não soube responder": nenhum LLM devolve um campo estruturado
-# dizendo "não sei", então detectamos pelas frases que o próprio system
-# prompt (core/retrieve.py) pede ao modelo, mais o aviso de indisponibilidade
-# do backend (core/chatbot_core.py). É uma aproximação pro time de
-# atendimento revisar à mão na lista de 👎 — não um classificador exato.
-_MARCADORES_NAO_RESPONDIDO = (
-    "%não encontr%",
-    "%não há informa%",
-    "%não tenho essa informa%",
-    "%não consegui acessar a base de conhecimento%",
-)
+
+def metricas_resumo() -> dict:
+    """{'total_perguntas': int, 'positivos': int, 'negativos': int}."""
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT count(*) AS total FROM mensagens WHERE papel = 'usuario'")
+            total_perguntas = cur.fetchone()["total"]
+            cur.execute("SELECT positivo, count(*) AS total FROM feedback GROUP BY positivo")
+            por_positivo = cur.fetchall()
+
+    positivos = next((r["total"] for r in por_positivo if r["positivo"]), 0)
+    negativos = next((r["total"] for r in por_positivo if not r["positivo"]), 0)
+    return {"total_perguntas": total_perguntas, "positivos": positivos, "negativos": negativos}
 
 
-def question_volume(days: int = 30) -> list[dict]:
-    """Volume de perguntas (mensagens do usuário) por dia, últimos `days` dias."""
+def listar_negativos() -> list[dict]:
+    """👎 com o histórico inteiro da conversa até a resposta avaliada
+    (não só a pergunta imediata) + comentário, mais recentes primeiro.
+
+    `historico` é a lista de mensagens da mesma `conversa_id` com
+    `criada_em <= criada_em da resposta avaliada`, em ordem cronológica —
+    a última entrada é sempre a resposta que recebeu o 👎. Não duplica dado
+    (é uma consulta sobre `mensagens`, não uma cópia gravada no feedback)."""
 
     sql = """
-        SELECT date_trunc('day', created_at AT TIME ZONE %(tz)s)::date AS dia, count(*) AS total
+        SELECT
+            f.comentario,
+            f.criada_em,
+            hist.historico
+        FROM feedback f
+        JOIN mensagens resposta ON resposta.id = f.mensagem_id
+        JOIN LATERAL (
+            SELECT json_agg(
+                json_build_object('papel', m.papel, 'conteudo', m.conteudo)
+                ORDER BY m.criada_em
+            ) AS historico
+            FROM mensagens m
+            WHERE m.conversa_id = resposta.conversa_id
+              AND m.criada_em <= resposta.criada_em
+        ) hist ON true
+        WHERE f.positivo = false
+        ORDER BY f.criada_em DESC
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql)
+            return cur.fetchall()
+
+
+def listar_nao_respondidas() -> list[dict]:
+    """Mensagens de assistente com bot_respondeu = false (pergunta + resposta)."""
+
+    sql = """
+        SELECT
+            resposta.conteudo AS resposta,
+            resposta.criada_em,
+            pergunta.conteudo AS pergunta
+        FROM mensagens resposta
+        LEFT JOIN mensagens pergunta ON pergunta.id = resposta.reply_to
+        WHERE resposta.papel = 'assistente' AND resposta.bot_respondeu = false
+        ORDER BY resposta.criada_em DESC
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql)
+            return cur.fetchall()
+
+
+def volume_por_dia(dias: int = 30) -> list[dict]:
+    """Contagem de perguntas (mensagens do usuário) por dia, últimos `dias` dias."""
+
+    sql = """
+        SELECT date_trunc('day', criada_em AT TIME ZONE %(tz)s)::date AS dia, count(*) AS total
         FROM mensagens
-        WHERE role = 'user' AND created_at >= now() - (%(days)s || ' days')::interval
+        WHERE papel = 'usuario' AND criada_em >= now() - (%(dias)s || ' days')::interval
         GROUP BY 1
         ORDER BY 1
     """
     with get_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, {"days": days, "tz": _TZ_NAME})
-            return cur.fetchall()
-
-
-def feedback_summary() -> dict:
-    """Contagem e percentual de 👍/👎 sobre o total de respostas avaliadas."""
-
-    sql = "SELECT rating, count(*) AS total FROM feedback GROUP BY rating"
-    with get_connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-
-    up = next((r["total"] for r in rows if r["rating"] == "up"), 0)
-    down = next((r["total"] for r in rows if r["rating"] == "down"), 0)
-    total = up + down
-    return {
-        "up": up,
-        "down": down,
-        "total": total,
-        "pct_up": (up / total * 100) if total else 0.0,
-        "pct_down": (down / total * 100) if total else 0.0,
-    }
-
-
-def negative_feedback() -> list[dict]:
-    """Lista dos 👎, com a pergunta (via reply_to) + resposta + comentário."""
-
-    sql = """
-        SELECT
-            f.comment,
-            f.created_at AS feedback_created_at,
-            resposta.content AS resposta,
-            pergunta.content AS pergunta
-        FROM feedback f
-        JOIN mensagens resposta ON resposta.id = f.message_id
-        LEFT JOIN mensagens pergunta ON pergunta.id = resposta.reply_to
-        WHERE f.rating = 'down'
-        ORDER BY f.created_at DESC
-    """
-    with get_connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql)
-            return cur.fetchall()
-
-
-def unanswered_questions() -> list[dict]:
-    """Perguntas cuja resposta bate com a heurística de 'não soube responder'
-    (ver `_MARCADORES_NAO_RESPONDIDO`) — pra time de atendimento revisar onde
-    a documentação está falha."""
-
-    condicoes = " OR ".join(f"resposta.content ILIKE %(m{i})s" for i in range(len(_MARCADORES_NAO_RESPONDIDO)))
-    sql = f"""
-        SELECT
-            resposta.content AS resposta,
-            resposta.created_at,
-            pergunta.content AS pergunta
-        FROM mensagens resposta
-        LEFT JOIN mensagens pergunta ON pergunta.id = resposta.reply_to
-        WHERE resposta.role = 'assistant' AND ({condicoes})
-        ORDER BY resposta.created_at DESC
-    """
-    params = {f"m{i}": marcador for i, marcador in enumerate(_MARCADORES_NAO_RESPONDIDO)}
-    with get_connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, params)
+            cur.execute(sql, {"dias": dias, "tz": _TZ_NAME})
             return cur.fetchall()
 
 
 def feedback_kpis() -> dict:
     """KPIs do topo do dashboard (TAI7-15): total de feedbacks, taxa de
     aprovação (%), quantos vieram com comentário e quantos são dos últimos 7
-    dias — só sobre os campos que já existem (rating 👍/👎 + comentário)."""
+    dias — só sobre os campos que já existem (positivo 👍/👎 + comentário)."""
 
     with get_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("SELECT rating, count(*) AS total FROM feedback GROUP BY rating")
-            por_rating = cur.fetchall()
+            cur.execute("SELECT positivo, count(*) AS total FROM feedback GROUP BY positivo")
+            por_positivo = cur.fetchall()
             cur.execute(
-                "SELECT count(*) AS total FROM feedback WHERE comment IS NOT NULL AND btrim(comment) <> ''"
+                "SELECT count(*) AS total FROM feedback WHERE comentario IS NOT NULL AND btrim(comentario) <> ''"
             )
             com_comentario = cur.fetchone()["total"]
-            cur.execute("SELECT count(*) AS total FROM feedback WHERE created_at >= now() - interval '7 days'")
+            cur.execute("SELECT count(*) AS total FROM feedback WHERE criada_em >= now() - interval '7 days'")
             ultimos_7_dias = cur.fetchone()["total"]
 
-    up = next((r["total"] for r in por_rating if r["rating"] == "up"), 0)
-    down = next((r["total"] for r in por_rating if r["rating"] == "down"), 0)
+    up = next((r["total"] for r in por_positivo if r["positivo"]), 0)
+    down = next((r["total"] for r in por_positivo if not r["positivo"]), 0)
     total = up + down
     return {
         "total": total,
@@ -151,7 +142,7 @@ def daily_feedback_counts() -> list[dict]:
 
     Tudo calculado no fuso de Brasília (`_TZ`), não UTC: os limites do mês são
     instantes absolutos com tzinfo explícito (não datas "nuas"), e o SQL
-    converte `created_at` pro mesmo fuso antes de truncar por dia — assim um
+    converte `criada_em` pro mesmo fuso antes de truncar por dia — assim um
     feedback dado às 23h de Brasília não vaza pro dia seguinte."""
 
     hoje = datetime.now(_TZ).date()
@@ -163,9 +154,9 @@ def daily_feedback_counts() -> list[dict]:
     fim = datetime.combine(ultimo_dia + timedelta(days=1), datetime.min.time(), tzinfo=_TZ)
 
     sql = """
-        SELECT date_trunc('day', created_at AT TIME ZONE %(tz)s)::date AS dia, rating, count(*) AS total
+        SELECT date_trunc('day', criada_em AT TIME ZONE %(tz)s)::date AS dia, positivo, count(*) AS total
         FROM feedback
-        WHERE created_at >= %(inicio)s AND created_at < %(fim)s
+        WHERE criada_em >= %(inicio)s AND criada_em < %(fim)s
         GROUP BY 1, 2
     """
     with get_connection() as conn:
@@ -173,25 +164,25 @@ def daily_feedback_counts() -> list[dict]:
             cur.execute(sql, {"inicio": inicio, "fim": fim, "tz": _TZ_NAME})
             rows = cur.fetchall()
 
-    contagem = {(r["dia"], r["rating"]): r["total"] for r in rows}
+    contagem = {(r["dia"], r["positivo"]): r["total"] for r in rows}
     return [
         {
             "dia": primeiro_dia + timedelta(days=i),
-            "positivos": contagem.get((primeiro_dia + timedelta(days=i), "up"), 0),
-            "negativos": contagem.get((primeiro_dia + timedelta(days=i), "down"), 0),
+            "positivos": contagem.get((primeiro_dia + timedelta(days=i), True), 0),
+            "negativos": contagem.get((primeiro_dia + timedelta(days=i), False), 0),
         }
         for i in range(dias_no_mes)
     ]
 
 
 def recent_feedback(limit: int = 5) -> list[dict]:
-    """Últimos feedbacks registrados (rating + comentário, se houver),
+    """Últimos feedbacks registrados (positivo + comentário, se houver),
     mais recente primeiro — base da lista "Comentários recentes"."""
 
     sql = """
-        SELECT rating, comment, created_at
+        SELECT positivo, comentario, criada_em
         FROM feedback
-        ORDER BY created_at DESC
+        ORDER BY criada_em DESC
         LIMIT %(limit)s
     """
     with get_connection() as conn:

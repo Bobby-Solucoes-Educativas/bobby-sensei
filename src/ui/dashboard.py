@@ -291,9 +291,9 @@ def render_recent_comments(comments: list[dict]) -> None:
         return
 
     for item in comments:
-        cor = GREEN if item["rating"] == "up" else RED
-        if item["comment"]:
-            texto = item["comment"]
+        cor = GREEN if item["positivo"] else RED
+        if item["comentario"]:
+            texto = item["comentario"]
             estilo_texto = f"color:{WHITE};"
         else:
             texto = "Sem comentário"
@@ -304,38 +304,44 @@ def render_recent_comments(comments: list[dict]) -> None:
             f'border:2px solid {cor};border-radius:3px;"></div>'
             f'<div><div style="{estilo_texto}">{texto}</div>'
             f'<div style="color:{WHITE};opacity:0.55;font-size:0.85rem;margin-top:2px;">'
-            f'{_relative_time(item["created_at"])}</div>'
+            f'{_relative_time(item["criada_em"])}</div>'
             "</div></div>",
             unsafe_allow_html=True,
         )
 
 
 def render_negative_feedback(items: list[dict]) -> None:
-    """Lista dos 👎 com pergunta + resposta + comentário (como era mostrado
-    antes do redesenho do TAI7-15) — cada um em um expander."""
+    """Lista dos 👎, cada um em um expander mostrando o histórico inteiro da
+    conversa até a resposta avaliada (não só a pergunta imediata) + o
+    comentário do feedback."""
 
     if not items:
         st.caption("Nenhum 👎 registrado até agora.")
         return
 
     for item in items:
-        with st.expander(f"🗨️ {item['pergunta'] or '(pergunta não identificada)'}"):
-            st.markdown(f"**Resposta:**\n\n{item['resposta']}")
-            if item["comment"]:
-                st.markdown(f"**Comentário:** {item['comment']}")
+        historico = item["historico"]
+        perguntas = [m["conteudo"] for m in historico if m["papel"] == "usuario"]
+        titulo = perguntas[-1] if perguntas else "(pergunta não identificada)"
+
+        with st.expander(f"🗨️ {titulo}"):
+            for m in historico:
+                rotulo = "🧑 Usuário" if m["papel"] == "usuario" else "🤖 Assistente"
+                st.markdown(f"**{rotulo}:**\n\n{m['conteudo']}")
+                st.divider()
+            if item["comentario"]:
+                st.markdown(f"**Comentário:** {item['comentario']}")
             else:
                 st.caption("Sem comentário.")
-            st.caption(f"Avaliado em {item['feedback_created_at']:%d/%m/%Y %H:%M}")
+            st.caption(f"Avaliado em {item['criada_em']:%d/%m/%Y %H:%M}")
 
 
 def render_unanswered_questions(items: list[dict]) -> None:
-    """Perguntas cuja resposta bateu com a heurística de "não soube
-    responder" (ver core.dashboard_data._MARCADORES_NAO_RESPONDIDO)."""
+    """Perguntas cuja resposta ficou com `bot_respondeu = false` — sinal
+    gravado no momento da resposta (ver core.chatbot_core._bot_respondeu);
+    linhas de antes da TAI7-13 foram preenchidas por heurística no backfill
+    (migration 0004), não um classificador exato."""
 
-    st.caption(
-        'Heurística baseada em frases como "não encontrei"/indisponibilidade — '
-        "revisar manualmente, não é um classificador exato."
-    )
     if not items:
         st.caption("Nenhuma pergunta sem resposta detectada até agora.")
         return
@@ -343,4 +349,4 @@ def render_unanswered_questions(items: list[dict]) -> None:
     for item in items:
         with st.expander(f"❓ {item['pergunta'] or '(pergunta não identificada)'}"):
             st.markdown(item["resposta"])
-            st.caption(f"Em {item['created_at']:%d/%m/%Y %H:%M}")
+            st.caption(f"Em {item['criada_em']:%d/%m/%Y %H:%M}")
