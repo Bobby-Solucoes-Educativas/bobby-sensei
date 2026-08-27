@@ -340,13 +340,22 @@ def render_unanswered_questions(items: list[dict]) -> None:
     """Perguntas cuja resposta ficou com `bot_respondeu = false` — sinal
     gravado no momento da resposta (ver core.chatbot_core._bot_respondeu);
     linhas de antes da TAI7-13 foram preenchidas por heurística no backfill
-    (migration 0004), não um classificador exato."""
+    (migration 0004), não um classificador exato. Cada expander mostra o
+    histórico inteiro da conversa até essa resposta, não só a pergunta
+    imediata (mesmo padrão de render_negative_feedback)."""
 
     if not items:
         st.caption("Nenhuma pergunta sem resposta detectada até agora.")
         return
 
     for item in items:
-        with st.expander(f"❓ {item['pergunta'] or '(pergunta não identificada)'}"):
-            st.markdown(item["resposta"])
+        historico = item["historico"]
+        perguntas = [m["conteudo"] for m in historico if m["papel"] == "usuario"]
+        titulo = perguntas[-1] if perguntas else "(pergunta não identificada)"
+
+        with st.expander(f"❓ {titulo}"):
+            for m in historico:
+                rotulo = "🧑 Usuário" if m["papel"] == "usuario" else "🤖 Assistente"
+                st.markdown(f"**{rotulo}:**\n\n{m['conteudo']}")
+                st.divider()
             st.caption(f"Em {item['criada_em']:%d/%m/%Y %H:%M}")

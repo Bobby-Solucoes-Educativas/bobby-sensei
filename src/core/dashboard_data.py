@@ -71,15 +71,24 @@ def listar_negativos() -> list[dict]:
 
 
 def listar_nao_respondidas() -> list[dict]:
-    """Mensagens de assistente com bot_respondeu = false (pergunta + resposta)."""
+    """Mensagens de assistente com bot_respondeu = false: histórico inteiro
+    da conversa até aquela resposta (não só a pergunta imediata) — mesmo
+    padrão de `listar_negativos`, ver docstring lá pra detalhe da LATERAL."""
 
     sql = """
         SELECT
-            resposta.conteudo AS resposta,
             resposta.criada_em,
-            pergunta.conteudo AS pergunta
+            hist.historico
         FROM mensagens resposta
-        LEFT JOIN mensagens pergunta ON pergunta.id = resposta.reply_to
+        JOIN LATERAL (
+            SELECT json_agg(
+                json_build_object('papel', m.papel, 'conteudo', m.conteudo)
+                ORDER BY m.criada_em
+            ) AS historico
+            FROM mensagens m
+            WHERE m.conversa_id = resposta.conversa_id
+              AND m.criada_em <= resposta.criada_em
+        ) hist ON true
         WHERE resposta.papel = 'assistente' AND resposta.bot_respondeu = false
         ORDER BY resposta.criada_em DESC
     """
