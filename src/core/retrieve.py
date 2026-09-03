@@ -20,11 +20,13 @@ pura e reutilizável; o app.py é quem chama `answer()` e desenha a tela.
 
 Único ponto de entrada público (consumido pela TAI7-9, interface Streamlit):
 
-    answer(pergunta: str, historico: list[dict] | None = None) -> str
+    answer(pergunta: str, history: list[dict] | None = None) -> str
 
-`historico` segue o mesmo formato de `st.session_state.messages` do
-Streamlit: `[{"role": "user"|"assistant", "content": str}, ...]`, sem incluir
-a pergunta atual.
+`history` são as mensagens anteriores da conversa — os mesmos objetos
+`chat_state.Message` que a UI e a persistência (core/store.py) já usam, sem
+inventar um formato paralelo. Não inclui a pergunta atual. Vira o
+`history_context` do prompt, cortado para caber em
+LIMIT_TOKENS_HISTORY_CONTEXT, a janela de contexto do histórico.
 
 DADOS: `_hybrid_retrieve` consulta a tabela `chunks` populada pela TAI7-6
 (`embed.py`) — schema e índices (HNSW vetorial + BM25 do ParadeDB) são criados
@@ -36,7 +38,7 @@ duas buscas, a fusão RRF e a geração respondem com o contexto recuperado.
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, trim_messages
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
@@ -48,8 +50,10 @@ from psycopg.rows import dict_row
 # (`from core.db import ...`, caso do streamlit rodando com src/ no path) e como
 # script solto (`python src/core/retrieve.py`, com src/core/ no path).
 try:
+    from core.chat_state import Message
     from core.db import get_connection
 except ImportError:
+    from chat_state import Message
     from db import get_connection
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -57,7 +61,6 @@ load_dotenv(ROOT_DIR / ".env")
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-5.4-mini"
-
 # Quantos candidatos cada busca (vetorial e BM25) devolve antes da fusão, e
 # quantos chunks de contexto sobram no top-k final que vai pro prompt.
 TOP_K_EACH = 20
@@ -67,6 +70,18 @@ TOP_K_FINAL = 10
 # cauda dominar. Vale ajustar depois de medir com perguntas reais (passo 8).
 RRF_K = 60
 
+# Janela de contexto do histórico: teto de tokens de conversa anterior que
+# acompanha cada pergunta. Restringe SÓ o `history_context` — o contexto
+# recuperado do RAG e o system prompt não passam por este limite.
+#
+# 1000 é um começo econômico: cabem ~2 trocas (pergunta + resposta) no padrão
+# de resposta atual do bot, o suficiente para uma pergunta de acompanhamento
+# ("quero", "e sobre isso?") enxergar o turno anterior. Para referência, o
+# contexto do RAG sozinho (TOP_K_FINAL chunks) já gasta ~2.500 tokens, então
+# esta janela é uma fração modesta do prompt. Subir o valor amplia a memória
+# da conversa e o custo por pergunta na mesma proporção.
+LIMIT_TOKENS_HISTORY_CONTEXT = 1000
+
 _SYSTEM_PROMPT = (
     "Você é o Bobby Sensei, assistente que responde dúvidas usando a "
     "documentação interna da empresa. Responda em português, de forma direta, "
@@ -74,6 +89,9 @@ _SYSTEM_PROMPT = (
     "for suficiente para responder, diga que não encontrou a informação na "
     "documentação — não invente. Quando útil, cite a página de origem."
 )
+
+
+_llm = ChatOpenAI(model=LLM_MODEL)
 
 
 def _openai_client() -> OpenAI:
@@ -182,6 +200,11 @@ def reciprocal_rank_fusion(
 
 
 # --------------------------------------------------------------------------- #
+# Passo 3.5 — reescrita da pergunta para a busca (query condensation)
+# --------------------------------------------------------------------------- #
+# Teto de tamanho da pergunta reescrita. Se vier maior, o modelo provavelmente
+# explicou em vez de reescrever — nesse caso a original é usada.
+# --------------------------------------------------------------------------- #
 # Passo 4 — retriever híbrido, encapsulado como Runnable da chain
 # --------------------------------------------------------------------------- #
 def _hybrid_retrieve(inputs: dict) -> list[dict]:
@@ -221,25 +244,63 @@ def _retrieve_and_format(inputs: dict) -> str:
 # --------------------------------------------------------------------------- #
 # Passo 5 — prompt template (contexto recuperado + histórico + pergunta)
 # --------------------------------------------------------------------------- #
-def _to_lc_messages(historico: list[dict]) -> list[BaseMessage]:
-    """Converte o histórico no formato do Streamlit
-    ([{"role": "user"|"assistant", "content": str}]) para mensagens LangChain,
+def _to_lc_messages(history: list[Message]) -> list[BaseMessage]:
+    """Converte as mensagens da conversa (chat_state.Message — o modelo comum
+    do projeto, já usado pela UI e pela persistência) em mensagens LangChain,
     consumidas pelo MessagesPlaceholder do prompt."""
     convertidas: list[BaseMessage] = []
-    for m in historico:
-        if m["role"] == "user":
-            convertidas.append(HumanMessage(content=m["content"]))
-        elif m["role"] == "assistant":
-            convertidas.append(AIMessage(content=m["content"]))
-        # outros roles (ex.: "system") são ignorados de propósito — o system
-        # prompt do Bobby Sensei é fixo, definido só no template abaixo.
+    for m in history:
+        if m.role == "user":
+            convertidas.append(HumanMessage(content=m.content))
+        elif m.role == "assistant":
+            convertidas.append(AIMessage(content=m.content))
+        # outros roles são ignorados de propósito — o system prompt do Bobby
+        # Sensei é fixo, definido só no template abaixo. Os demais campos do
+        # Message (chunks, db_id, bot_respondeu) não interessam ao modelo.
     return convertidas
+
+
+def _estimate_tokens(mensagens: list[BaseMessage]) -> int:
+    """Estimativa de tokens de uma lista de mensagens, usada como régua da
+    janela de contexto.
+
+    É aproximação proposital (~4 caracteres por token em português, mais uma
+    folga fixa por mensagem para role/delimitadores): o tiktoken não reconhece
+    o `gpt-5.4-mini` (levanta KeyError), então qualquer contagem "exata" aqui
+    seria o tokenizer de outro modelo fingindo precisão. Para um teto de
+    orçamento, a aproximação basta — e evita uma dependência a mais.
+    """
+    return sum(len(m.content) // 4 + 4 for m in mensagens)
+
+
+def build_history_context(history: list[Message] | None) -> list[BaseMessage]:
+    """Monta o `history_context`: o histórico da conversa já convertido e
+    cortado para caber em LIMIT_TOKENS_HISTORY_CONTEXT.
+
+    Mantém as trocas mais recentes (`strategy="last"`) e começa sempre numa
+    pergunta do usuário (`start_on="human"`), para o modelo não receber uma
+    resposta órfã sem a pergunta que a originou. Se nem uma troca inteira
+    couber no limite, o resultado é vazio — nesse caso vale subir a constante.
+    """
+    mensagens = _to_lc_messages(history or [])
+    if not mensagens:
+        return []
+
+    return trim_messages(
+        mensagens,
+        max_tokens=LIMIT_TOKENS_HISTORY_CONTEXT,
+        token_counter=_estimate_tokens,
+        strategy="last",
+        start_on="human",
+        include_system=False,
+        allow_partial=False,
+    )
 
 
 _prompt = ChatPromptTemplate.from_messages(
     [
         ("system", _SYSTEM_PROMPT),
-        MessagesPlaceholder("historico"),
+        MessagesPlaceholder("history_context"),
         ("human", "Contexto extraído da documentação:\n\n{contexto}\n\nPergunta: {pergunta}"),
     ]
 )
@@ -249,8 +310,6 @@ _prompt = ChatPromptTemplate.from_messages(
 # Passos 6 e 7 — chain LCEL (retrieval -> prompt -> GPT-5.4 mini -> resposta)
 # e função pública única que a TAI7-9 consome
 # --------------------------------------------------------------------------- #
-_llm = ChatOpenAI(model=LLM_MODEL)
-
 rag_chain = (
     RunnablePassthrough.assign(contexto=RunnableLambda(_retrieve_and_format))
     | _prompt
@@ -259,19 +318,20 @@ rag_chain = (
 )
 
 
-def answer(pergunta: str, historico: list[dict] | None = None) -> str:
+def answer(pergunta: str, history: list[Message] | None = None) -> str:
     """Ponto de entrada único do RAG híbrido, consumido pela TAI7-9.
 
-    `historico` é uma lista de dicts {"role": "user"|"assistant", "content": str}
-    (mesmo formato de st.session_state.messages no Streamlit), sem incluir a
-    pergunta atual. Retorna a resposta em texto puro.
+    `history` são as mensagens anteriores da conversa (chat_state.Message),
+    sem incluir a pergunta atual. Ele vira o `history_context` do prompt,
+    limitado a
+    LIMIT_TOKENS_HISTORY_CONTEXT. Retorna a resposta em texto puro.
 
     (Requer a TAI7-6 pronta: tabela `chunks` populada num ParadeDB rodando.)
     """
     return rag_chain.invoke(
         {
             "pergunta": pergunta,
-            "historico": _to_lc_messages(historico or []),
+            "history_context": build_history_context(history),
         }
     )
 
@@ -280,16 +340,21 @@ _answer_chain = _prompt | _llm | StrOutputParser()
 
 
 def answer_with_chunks(
-    pergunta: str, historico: list[dict] | None = None
+    pergunta: str, history: list[Message] | None = None
 ) -> tuple[str, list[dict]]:
     """Como `answer()`, mas também devolve os chunks recuperados (pra exibir
     como fonte/anexo na UI). Roda o mesmo retrieval e a mesma chain de
     geração, só expondo o resultado intermediário do `_hybrid_retrieve`."""
-    chunks = _hybrid_retrieve({"pergunta": pergunta})
+    # Uma única montagem da janela: serve tanto para condensar a pergunta de
+    # busca (dentro do _hybrid_retrieve) quanto para o prompt da resposta.
+    history_context = build_history_context(history)
+    chunks = _hybrid_retrieve(
+        {"pergunta": pergunta, "history_context": history_context}
+    )
     resposta = _answer_chain.invoke(
         {
             "pergunta": pergunta,
-            "historico": _to_lc_messages(historico or []),
+            "history_context": history_context,
             "contexto": _format_context(chunks),
         }
     )
@@ -297,12 +362,12 @@ def answer_with_chunks(
 
 
 if __name__ == "__main__":
-    historico: list[dict] = []
+    history: list[dict] = []
     while True:
         pergunta = input("Pergunta (Enter para sair): ").strip()
         if not pergunta:
             break
-        resposta = answer(pergunta, historico)
+        resposta = answer(pergunta, history)
         print(f"\n{resposta}\n")
-        historico.append({"role": "user", "content": pergunta})
-        historico.append({"role": "assistant", "content": resposta})
+        history.append({"role": "user", "content": pergunta})
+        history.append({"role": "assistant", "content": resposta})
