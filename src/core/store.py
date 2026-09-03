@@ -4,10 +4,27 @@
 # lógica. app.py e ui/feedback.py são quem chama isso.
 import json
 
+from psycopg.rows import dict_row
+
 try:
+    from core.chat_state import Message
     from core.db import get_connection
 except ImportError:
+    from chat_state import Message
     from db import get_connection
+
+# Vocabulário do banco x vocabulário do modelo em memória. O CHECK de
+# `mensagens.papel` só aceita 'usuario'/'assistente' (migration 0003), enquanto
+# chat_state.Message.role usa 'user'/'assistant'. Os dois sentidos ficam aqui,
+# no limite com o banco, para a tradução não se espalhar pelo código.
+_PAPEL_POR_ROLE = {"user": "usuario", "assistant": "assistente"}
+_ROLE_POR_PAPEL = {v: k for k, v in _PAPEL_POR_ROLE.items()}
+
+
+def papel_de_role(role: str) -> str:
+    """Traduz o `role` do chat_state.Message para o `papel` do banco."""
+
+    return _PAPEL_POR_ROLE[role]
 
 
 def criar_conversa(atendente: str | None = None, session_id: str | None = None) -> int:
@@ -88,3 +105,44 @@ def registrar_feedback(mensagem_id: int, positivo: bool, comentario: str | None 
     """
     with get_connection() as conn:
         conn.execute(sql, {"mensagem_id": mensagem_id, "positivo": positivo, "comentario": comentario})
+
+
+def carregar_historico(conversa_id: int, antes_de: int | None = None) -> list[Message]:
+    """Histórico da conversa em ordem cronológica, como chat_state.Message.
+
+    É a fonte de verdade do contexto que vai para o LLM (TAI7-8): em vez de
+    depender do estado em memória do Streamlit, lê as mensagens já persistidas
+    por `salvar_mensagem` — então qualquer canal (FastAPI/WhatsApp) monta o
+    mesmo histórico só com o `conversa_id`.
+
+    `antes_de` recorta o histórico ANTES de uma mensagem (o id da pergunta
+    pendente, que não deve entrar no próprio contexto). Ordena e filtra por
+    `id` em vez de `criada_em` porque o id é BIGINT IDENTITY, monotônico e sem
+    empate — duas mensagens podem compartilhar o timestamp.
+
+    Quem chama corta o histórico para caber na janela de contexto
+    (retrieve.build_history_context) — aqui a conversa volta inteira.
+    """
+
+    sql = """
+        SELECT id, papel, conteudo, fontes, bot_respondeu
+        FROM mensagens
+        WHERE conversa_id = %(conversa_id)s
+          AND (%(antes_de)s::bigint IS NULL OR id < %(antes_de)s::bigint)
+        ORDER BY id
+    """
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, {"conversa_id": conversa_id, "antes_de": antes_de})
+            linhas = cur.fetchall()
+
+    return [
+        Message(
+            role=_ROLE_POR_PAPEL[linha["papel"]],
+            content=linha["conteudo"],
+            chunks=linha["fontes"] or [],
+            db_id=linha["id"],
+            bot_respondeu=linha["bot_respondeu"],
+        )
+        for linha in linhas
+    ]

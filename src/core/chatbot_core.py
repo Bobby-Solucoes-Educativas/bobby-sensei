@@ -1,6 +1,7 @@
 # TAI7-9/TAI7-14: orquestra o fluxo de resposta a uma pergunta, delegando o
 # RAG híbrido (retrieval + LLM) para core/retrieve.py. Função pura, sem
 # streamlit — reaproveitável por outros canais (WhatsApp/FastAPI) no futuro.
+from core.chat_state import Message
 from core.retrieve import answer_with_chunks
 
 _UNAVAILABLE_ANSWER = (
@@ -20,13 +21,21 @@ _FRASES_NAO_RESPONDIDO = (
 )
 
 
+
 def _bot_respondeu(resposta: str) -> bool:
     texto = resposta.lower()
     return not any(frase in texto for frase in _FRASES_NAO_RESPONDIDO)
 
 
-def answer_question(question: str) -> tuple[str, list[dict], bool]:
+def answer_question(
+    question: str, history: list[Message] | None = None
+) -> tuple[str, list[dict], bool]:
     """Responde a pergunta via RAG híbrido; cai num aviso se o backend falhar.
+
+    `history` são as mensagens anteriores da conversa (chat_state.Message,
+    o mesmo modelo usado pela UI e pela persistência), sem a pergunta atual;
+    vira o `history_context` do prompt, para perguntas de acompanhamento
+    ("quero", "e sobre isso?") enxergarem o turno anterior.
 
     Devolve a resposta, os chunks recuperados que a embasaram (pra exibir
     como fonte/anexo na UI) e `bot_respondeu` (False se caiu no fallback de
@@ -35,7 +44,7 @@ def answer_question(question: str) -> tuple[str, list[dict], bool]:
     """
 
     try:
-        resposta, chunks = answer_with_chunks(question)
+        resposta, chunks = answer_with_chunks(question, history)
         return resposta, chunks, _bot_respondeu(resposta)
     except Exception:
         return _UNAVAILABLE_ANSWER.format(question=question), [], False

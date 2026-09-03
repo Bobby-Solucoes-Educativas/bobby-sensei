@@ -22,6 +22,8 @@ conversa a cada rodada, simulando o uso real pela interface.
 
 ```
 pergunta + histórico
+  -> _condense_question (reescreve o acompanhamento como pergunta autônoma,
+                         só para servir de query da busca)
   -> _hybrid_retrieve   (embedding da pergunta -> busca vetorial + BM25 -> RRF)
   -> _format_context    (chunks recuperados viram texto numerado com fonte)
   -> prompt             (ChatPromptTemplate: system + histórico + contexto + pergunta)
@@ -75,7 +77,8 @@ fontes exibida pela interface (ver "Pontos de entrada públicos" abaixo).
 1. **system** (`_SYSTEM_PROMPT`, fixo): instrui a responder só com o
    contexto fornecido, em português, e admitir quando a documentação não
    cobre a pergunta.
-2. **`MessagesPlaceholder("historico")`**: as trocas anteriores da conversa.
+2. **`MessagesPlaceholder("history_context")`**: as trocas anteriores da
+   conversa, cortadas para caber em `LIMIT_TOKENS_HISTORY_CONTEXT`.
 3. **human**: contexto recuperado (formatado por `_format_context`) +
    pergunta atual.
 
@@ -84,23 +87,53 @@ que já foi dito nessa conversa" (permite perguntas de acompanhamento tipo "e
 o prazo disso?"); o contexto é recalculado do zero a cada pergunta, buscando
 de novo no banco.
 
+## Janela de contexto do histórico
+
+`LIMIT_TOKENS_HISTORY_CONTEXT` (1000) é o teto de tokens de conversa anterior
+que acompanha cada pergunta — restringe **só** o `history_context`, não o
+contexto do RAG nem o system prompt. `build_history_context()` converte as
+mensagens e corta com `trim_messages` do LangChain, mantendo as trocas mais
+recentes e começando sempre numa pergunta do usuário (para o modelo não
+receber uma resposta órfã). 1000 tokens cabem ~2 trocas no padrão de resposta
+atual; o contexto do RAG sozinho já gasta ~2.500, então a janela é uma fração
+modesta do prompt.
+
+A contagem (`_estimate_tokens`) é aproximada de propósito (~4 caracteres por
+token): o `tiktoken` não reconhece o `gpt-5.4-mini`, então uma contagem
+"exata" seria o tokenizer de outro modelo fingindo precisão. Para um teto de
+orçamento, a aproximação basta.
+
+## Reescrita da pergunta para a busca (query condensation)
+
+Sem isso, um acompanhamento como "quero" ou "e os filtros opcionais?" vira a
+query literal do embedding/BM25 e recupera a página errada — o modelo entende
+a pergunta pelo histórico, mas recebe contexto irrelevante e recusa responder.
+
+`_condense_question()` usa o histórico para reescrever a pergunta como
+autônoma (`"quero"` → `"Como emitir um atestado de matrícula?"`) e alimenta
+**só a busca**; o prompt de resposta continua recebendo a pergunta original do
+usuário. Três proteções: sem histórico (1º turno) pula a chamada ao LLM;
+exceção cai na pergunta original; reescrita vazia ou acima de
+`_MAX_CONDENSED_CHARS` (300) também cai na original — o pior caso é o
+comportamento anterior a esta etapa.
+
 ## Pontos de entrada públicos (consumidos pela TAI7-9)
 
 ```python
-def answer(pergunta: str, historico: list[dict] | None = None) -> str
+def answer(pergunta: str, history: list[Message] | None = None) -> str
 ```
 
-- `historico` segue o mesmo formato de `st.session_state.messages` do
-  Streamlit: `[{"role": "user"|"assistant", "content": str}, ...]`, **sem**
-  incluir a pergunta atual.
-- `historico=None` por default — turno 1 de uma conversa nova funciona sem
+- `history` são as mensagens anteriores da conversa — os mesmos objetos
+  `chat_state.Message` que a UI e a persistência (`core/store.py`) já usam,
+  sem formato paralelo. **Não** inclui a pergunta atual.
+- `history=None` por default — turno 1 de uma conversa nova funciona sem
   passar nada.
 - Retorna a resposta como `str` puro — quem chama não precisa importar nada
   de `langchain_core`.
 
 ```python
 def answer_with_chunks(
-    pergunta: str, historico: list[dict] | None = None
+    pergunta: str, history: list[Message] | None = None
 ) -> tuple[str, list[dict]]
 ```
 
@@ -135,18 +168,19 @@ seguem testáveis isoladamente sem banco:
 - `reciprocal_rank_fusion` (função pura, com listas de chunks fabricadas)
 - `_format_context` (função pura)
 - A sub-chain `_prompt | _llm | StrOutputParser()` isolada, invocada
-  diretamente com `{"pergunta", "historico", "contexto"}` fabricados à mão —
+  diretamente com `{"pergunta", "history_context", "contexto"}` fabricados à mão —
   valida grounding (a resposta usa só o contexto) e uso real do histórico
   (uma pergunta de acompanhamento só faz sentido com a resposta anterior).
 
 ## Observações para a próxima etapa (interface — TAI7-9)
 
-- Chamar `answer(pergunta, historico)` (só o texto) ou `answer_with_chunks(
-pergunta, historico)` (texto + fontes, usado hoje pela interface pra
-  exibir os chunks como anexo) — todo o resto (retrieval, prompt, chain) é
-  implementação interna do módulo.
-- `historico` pode ser passado direto de `st.session_state.messages` (mesmo
-  formato de dict), sem conversão manual.
+- Chamar `answer(pergunta, history)` (só o texto) ou
+  `answer_with_chunks(pergunta, history)` (texto + fontes, usado hoje pela
+  interface pra exibir os chunks como anexo) — todo o resto (retrieval,
+  condensação, prompt, chain) é implementação interna do módulo.
+- `history` é a própria lista de `chat_state.Message` da conversa, sem a
+  pergunta atual (`conversation.messages[:-1]`) — sem conversão manual e sem
+  formato paralelo: é o mesmo modelo que a UI e o `core/store.py` já usam.
 - A sintaxe de `bm25_search` (operador `@@@`, `paradedb.score()`) foi
   validada com `pg_search` 0.24.3 — a API do ParadeDB muda entre versões, então
   reconferir se o time atualizar a imagem do banco.
