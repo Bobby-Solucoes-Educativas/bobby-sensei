@@ -3,6 +3,8 @@
 
 Fluxo (RAG híbrido, ponta a ponta):
     pergunta + histórico
+      -> _condense_question (reescreve o acompanhamento como pergunta autônoma,
+                             só para servir de query da busca)
       -> _hybrid_retrieve   (embedding da pergunta -> busca vetorial + BM25 -> RRF)
       -> _format_context    (chunks recuperados viram texto numerado com fonte)
       -> prompt             (ChatPromptTemplate: system + histórico + contexto + pergunta)
@@ -61,6 +63,16 @@ load_dotenv(ROOT_DIR / ".env")
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-5.4-mini"
+# Controla o quão determinística é a resposta do LLM: mais baixa = mais
+# consistente/previsível, mais alta = mais variação entre respostas pra
+# mesma entrada. Sem este parâmetro, o padrão da API (~1.0) causava
+# inconsistência real: a mesma pergunta de acompanhamento ("quero") ora
+# respondia certo, ora recusava como "mensagem incompleta" (mesmo histórico,
+# mesmo contexto recuperado) — ver testes A/B em retrieve com o prompt de
+# acompanhamento. 0.0 elimina essa variância, adequado a um RAG factual que
+# não busca criatividade.
+LLM_TEMPERATURE = 1.0
+
 # Quantos candidatos cada busca (vetorial e BM25) devolve antes da fusão, e
 # quantos chunks de contexto sobram no top-k final que vai pro prompt.
 TOP_K_EACH = 20
@@ -87,11 +99,20 @@ _SYSTEM_PROMPT = (
     "documentação interna da empresa. Responda em português, de forma direta, "
     "usando SOMENTE as informações do contexto fornecido. Se o contexto não "
     "for suficiente para responder, diga que não encontrou a informação na "
-    "documentação — não invente. Quando útil, cite a página de origem."
+    "documentação — não invente. Quando útil, cite a página de origem. "
+    # Sem esta parte o modelo às vezes trata um acompanhamento curto como
+    # mensagem incompleta ("você escreveu apenas 'quero'"), mesmo com a
+    # conversa no prompt e o contexto certo recuperado.
+    "A conversa anterior faz parte do enunciado: quando a pergunta atual for "
+    "curta ou apenas referenciar o que já foi dito (\"quero\", \"sim\", "
+    "\"e isso?\", \"continua\"), interprete-a à luz da última resposta — "
+    "inclusive quando ela estiver aceitando algo que você mesmo ofereceu. Não "
+    "responda que a mensagem está incompleta se a conversa deixa claro o que "
+    "foi pedido."
 )
 
 
-_llm = ChatOpenAI(model=LLM_MODEL)
+_llm = ChatOpenAI(model=LLM_MODEL, temperature=LLM_TEMPERATURE)
 
 
 def _openai_client() -> OpenAI:
@@ -204,19 +225,77 @@ def reciprocal_rank_fusion(
 # --------------------------------------------------------------------------- #
 # Teto de tamanho da pergunta reescrita. Se vier maior, o modelo provavelmente
 # explicou em vez de reescrever — nesse caso a original é usada.
+_MAX_CONDENSED_CHARS = 300
+
+_CONDENSE_SYSTEM_PROMPT = (
+    "Você reescreve perguntas de acompanhamento para busca em documentação. "
+    "Dada a conversa anterior e a pergunta de acompanhamento, reescreva-a como "
+    "uma pergunta AUTÔNOMA, que faça sentido sozinha, sem depender da conversa: "
+    "resolva pronomes e referências implícitas (\"isso\", \"ele\", \"quero\") "
+    "usando os termos concretos que aparecem na conversa. Se a pergunta já for "
+    "autônoma, devolva-a inalterada. Responda APENAS com a pergunta reescrita, "
+    "sem explicação, sem aspas e sem prefixo."
+)
+
+_condense_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", _CONDENSE_SYSTEM_PROMPT),
+        MessagesPlaceholder("history_context"),
+        ("human", "Pergunta de acompanhamento: {pergunta}"),
+    ]
+)
+
+_condense_chain = _condense_prompt | _llm | StrOutputParser()
+
+
+def _condense_question(pergunta: str, history_context: list[BaseMessage]) -> str:
+    """Reescreve a pergunta como autônoma, para servir de query da busca.
+
+    Sem isso, um acompanhamento como "quero" ou "e os filtros opcionais?" vira
+    a query literal do embedding/BM25 e recupera a página errada — o modelo até
+    entende a pergunta pelo histórico, mas recebe contexto irrelevante e recusa
+    responder.
+
+    O resultado alimenta SÓ a busca; o prompt de resposta continua recebendo a
+    pergunta original do usuário. Sem histórico (1º turno) a pergunta já é
+    autônoma e a chamada ao LLM é pulada. Qualquer falha cai na pergunta
+    original — o pior caso é o comportamento anterior a esta etapa.
+    """
+    if not history_context:
+        return pergunta
+
+    try:
+        reescrita = _condense_chain.invoke(
+            {"pergunta": pergunta, "history_context": history_context}
+        ).strip()
+    except Exception:
+        return pergunta
+
+    if not reescrita or len(reescrita) > _MAX_CONDENSED_CHARS:
+        return pergunta
+    return reescrita
+
+
 # --------------------------------------------------------------------------- #
 # Passo 4 — retriever híbrido, encapsulado como Runnable da chain
 # --------------------------------------------------------------------------- #
 def _hybrid_retrieve(inputs: dict) -> list[dict]:
-    """inputs: {"pergunta": str, ...}. Roda embed_query + vector_search +
-    bm25_search + RRF (psycopg cru) e devolve os chunks top-k. É a peça que a
-    chain LCEL injeta via RunnableLambda — LangChain não tem retriever pronto
-    pra ParadeDB/pg_search híbrido, então essa lógica continua sendo nossa."""
-    pergunta = inputs["pergunta"]
-    query_embedding = embed_query(pergunta)
+    """inputs: {"pergunta": str, "history_context": [...], ...}. Condensa a
+    pergunta, roda embed_query + vector_search + bm25_search + RRF (psycopg
+    cru) e devolve os chunks top-k. É a peça que a chain LCEL injeta via
+    RunnableLambda — LangChain não tem retriever pronto pra ParadeDB/pg_search
+    híbrido, então essa lógica continua sendo nossa.
+
+    É o ponto único por onde passam os dois caminhos públicos (`answer` via
+    rag_chain e `answer_with_chunks`), por isso a condensação mora aqui.
+    """
+    pergunta_busca = _condense_question(
+        inputs["pergunta"], inputs.get("history_context") or []
+    )
+    query_embedding = embed_query(pergunta_busca)
     with get_connection() as conn:
         vector_hits = vector_search(conn, query_embedding)
-        bm25_hits = bm25_search(conn, pergunta)
+        bm25_hits = bm25_search(conn, pergunta_busca)
     return reciprocal_rank_fusion([vector_hits, bm25_hits], top_k=TOP_K_FINAL)
 
 
