@@ -170,14 +170,25 @@ def bm25_search(conn, query_text: str, limit: int = TOP_K_EACH) -> list[dict]:
     do ParadeDB. Complementa a busca vetorial: pega correspondência exata de
     termos (siglas, nomes de sistema) que a similaridade semântica às vezes perde.
 
-    Obs.: operador `@@@` e função `paradedb.score()` são a API do pg_search
-    (validado com pg_search 0.24.3). Busca só na coluna `text` — que já traz o
-    breadcrumb (logo, o caminho/título da página) prefixado pelo format.py."""
+    Usa `paradedb.match('text', query_text)` em vez de `text @@@ query_text`
+    direto. O operador `@@@` com uma string crua faz PARSE dela como consulta
+    (sintaxe tipo Tantivy/Lucene: ":" separa campo:termo, parênteses agrupam,
+    AND/OR/NOT são operadores booleanos) — qualquer pergunta com dois-pontos
+    (ex.: "status: pendente") ou uma pergunta reescrita pela condensação
+    (ver _condense_question) que caia nesse padrão quebra a query com
+    psycopg.errors.InternalError_ em vez de simplesmente não achar nada.
+    `paradedb.match()` trata o valor sempre como texto literal — mesmo score/
+    ranking pra buscas normais (validado: mesmos chunk_id e score do `@@@`
+    cru numa consulta sem sintaxe especial), mas sem essa fragilidade.
+
+    Obs.: `paradedb.score()` segue a API do pg_search (validado com pg_search
+    0.24.3). Busca só na coluna `text` — que já traz o breadcrumb (logo, o
+    caminho/título da página) prefixado pelo format.py."""
     sql = """
         SELECT chunk_id, page_id, title, url, breadcrumb, text,
                paradedb.score(chunk_id) AS score
         FROM chunks
-        WHERE text @@@ %(q)s
+        WHERE chunk_id @@@ paradedb.match('text', %(q)s)
         ORDER BY score DESC
         LIMIT %(limit)s
     """
