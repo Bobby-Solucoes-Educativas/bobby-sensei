@@ -65,13 +65,12 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 LLM_MODEL = "gpt-5.4-mini"
 # Controla o quão determinística é a resposta do LLM: mais baixa = mais
 # consistente/previsível, mais alta = mais variação entre respostas pra
-# mesma entrada. Sem este parâmetro, o padrão da API (~1.0) causava
-# inconsistência real: a mesma pergunta de acompanhamento ("quero") ora
-# respondia certo, ora recusava como "mensagem incompleta" (mesmo histórico,
-# mesmo contexto recuperado) — ver testes A/B em retrieve com o prompt de
-# acompanhamento. 0.0 elimina essa variância, adequado a um RAG factual que
-# não busca criatividade.
-LLM_TEMPERATURE = 0.0
+# mesma entrada. 1.0 é o padrão da API quando o parâmetro não é passado —
+# mantido aqui, só exposto como constante nomeada. Testes A/B mostraram que
+# baixar isso (ex.: 0.0) reduz a variância de perguntas de acompanhamento
+# curtas ("quero") ora sendo respondidas, ora recusadas — mas ajustar o
+# valor fica para uma task futura.
+LLM_TEMPERATURE = 1.0
 
 # Quantos candidatos cada busca (vetorial e BM25) devolve antes da fusão, e
 # quantos chunks de contexto sobram no top-k final que vai pro prompt.
