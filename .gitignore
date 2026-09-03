@@ -219,3 +219,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# TAI7-13: dump/CSVs de referência com dado real de usuário — não versionar
+scripts/migracao_tai7_13/

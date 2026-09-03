@@ -6,9 +6,9 @@ import streamlit as st
 from core.dashboard_data import (
     daily_feedback_counts,
     feedback_kpis,
-    negative_feedback,
+    listar_nao_respondidas,
+    listar_negativos,
     recent_feedback,
-    unanswered_questions,
 )
 from ui.dashboard import (
     render_daily_chart,
@@ -63,9 +63,9 @@ render_distribution_section(kpis, recent_feedback(limit=5))
 st.divider()
 
 st.subheader("👎 Respostas com feedback negativo")
-render_negative_feedback(negative_feedback())
+render_negative_feedback(listar_negativos())
 
 st.divider()
 
 st.subheader("🤷 Perguntas que o bot não soube responder")
-render_unanswered_questions(unanswered_questions())
+render_unanswered_questions(listar_nao_respondidas())

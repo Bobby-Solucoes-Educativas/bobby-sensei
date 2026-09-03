@@ -1,5 +1,5 @@
-# TAI7-9: orquestra o fluxo de resposta a uma pergunta, delegando o RAG
-# híbrido (retrieval + LLM) para core/retrieve.py. Função pura, sem
+# TAI7-9/TAI7-14: orquestra o fluxo de resposta a uma pergunta, delegando o
+# RAG híbrido (retrieval + LLM) para core/retrieve.py. Função pura, sem
 # streamlit — reaproveitável por outros canais (WhatsApp/FastAPI) no futuro.
 from core.retrieve import answer_with_chunks
 
@@ -8,15 +8,34 @@ _UNAVAILABLE_ANSWER = (
     "resposta de exemplo para:\n\n> {question}"
 )
 
+# Mesmas frases-marcador usadas no backfill de `bot_respondeu` na migration
+# 0004 — quem responde de acordo com o system prompt de retrieve.py usa esse
+# vocabulário quando não achou contexto suficiente. Aproximação, não um
+# classificador exato (mesma ressalva do dashboard).
+_FRASES_NAO_RESPONDIDO = (
+    "não encontr",
+    "não há informa",
+    "não tenho essa informa",
+    "não consegui acessar a base de conhecimento",
+)
 
-def answer_question(question: str) -> tuple[str, list[dict]]:
+
+def _bot_respondeu(resposta: str) -> bool:
+    texto = resposta.lower()
+    return not any(frase in texto for frase in _FRASES_NAO_RESPONDIDO)
+
+
+def answer_question(question: str) -> tuple[str, list[dict], bool]:
     """Responde a pergunta via RAG híbrido; cai num aviso se o backend falhar.
 
-    Devolve a resposta e os chunks recuperados que a embasaram (pra exibir
-    como fonte/anexo na UI); em caso de falha, chunks vem vazio.
+    Devolve a resposta, os chunks recuperados que a embasaram (pra exibir
+    como fonte/anexo na UI) e `bot_respondeu` (False se caiu no fallback de
+    exceção ou se a resposta bate com a heurística de "não sei") — sinal que
+    o chamador repassa pra `store.salvar_mensagem` (TAI7-13/14).
     """
 
     try:
-        return answer_with_chunks(question)
+        resposta, chunks = answer_with_chunks(question)
+        return resposta, chunks, _bot_respondeu(resposta)
     except Exception:
-        return _UNAVAILABLE_ANSWER.format(question=question), []
+        return _UNAVAILABLE_ANSWER.format(question=question), [], False
