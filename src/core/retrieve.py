@@ -71,7 +71,7 @@ LLM_MODEL = "gpt-5.4-mini"
 # mesmo contexto recuperado) — ver testes A/B em retrieve com o prompt de
 # acompanhamento. 0.0 elimina essa variância, adequado a um RAG factual que
 # não busca criatividade.
-LLM_TEMPERATURE = 1.0
+LLM_TEMPERATURE = 0.0
 
 # Quantos candidatos cada busca (vetorial e BM25) devolve antes da fusão, e
 # quantos chunks de contexto sobram no top-k final que vai pro prompt.
