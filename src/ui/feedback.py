@@ -10,6 +10,7 @@ import streamlit.components.v1 as components
 
 from core.chat_state import Message
 from core.store import registrar_feedback
+from ui.auth import logged_in_email
 from ui.theme import BLACK, GREEN, WHITE, rgba
 
 _ICONS_DIR = Path(__file__).resolve().parent.parent / "icon"
@@ -124,7 +125,13 @@ def _toolbar_css(toolbar_key: str) -> str:
 
 def render_feedback_widget(message: Message) -> None:
     """Barra de ações (👍/👎 + comentário opcional, copiar) abaixo de uma
-    resposta do assistente."""
+    resposta do assistente.
+
+    Quem manda o 👍/👎 já está logado (app.py chama require_login() antes de
+    desenhar o chat), então `criado_por` vem direto da sessão — sem pedir
+    e-mail de novo aqui."""
+
+    criado_por = logged_in_email()
 
     if "feedback_state" not in st.session_state:
         st.session_state.feedback_state = {}
@@ -146,7 +153,7 @@ def render_feedback_widget(message: Message) -> None:
         col_up, col_down, col_copy = st.columns(3)
         with col_up:
             if st.button(" ", key=up_key, type="primary" if state["rating"] == "up" else "secondary"):
-                registrar_feedback(message.db_id, True)
+                registrar_feedback(message.db_id, True, criado_por=criado_por)
                 st.session_state.feedback_state[message.id] = {"rating": "up", "sent": True}
                 st.rerun()
         with col_down:
@@ -155,7 +162,7 @@ def render_feedback_widget(message: Message) -> None:
                 # e dependia do clique em "Enviar feedback" pra persistir; se
                 # o usuário saísse sem mandar comentário, o voto negativo
                 # nunca ia pro banco (bug real, confirmado com teste).
-                registrar_feedback(message.db_id, False)
+                registrar_feedback(message.db_id, False, criado_por=criado_por)
                 st.session_state.feedback_state[message.id] = {"rating": "down", "sent": True}
                 st.rerun()
         with col_copy:
@@ -167,7 +174,7 @@ def render_feedback_widget(message: Message) -> None:
             key=f"fb-comment-{message.id}",
         )
         if st.button("Enviar feedback", key=f"fb-send-{message.id}"):
-            registrar_feedback(message.db_id, False, comment.strip() or None)
+            registrar_feedback(message.db_id, False, comment.strip() or None, criado_por=criado_por)
             st.session_state.feedback_state[message.id]["sent"] = True
             st.rerun()
 
