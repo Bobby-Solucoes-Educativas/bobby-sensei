@@ -91,20 +91,76 @@ def salvar_mensagem(
         return row[0]
 
 
-def registrar_feedback(mensagem_id: int, positivo: bool, comentario: str | None = None) -> None:
+def registrar_feedback(
+    mensagem_id: int, positivo: bool, comentario: str | None = None, criado_por: str | None = None
+) -> None:
     """Upsert em `feedback`: um feedback por mensagem — trocar o voto
-    atualiza a linha (via UNIQUE(mensagem_id)), não cria outra."""
+    atualiza a linha (via UNIQUE(mensagem_id)), não cria outra.
+
+    `criado_por` é o e-mail de quem está logado (ui.auth.logged_in_email)
+    no momento do clique — identifica quem deu o 👍/👎, separado de
+    `classificado_por` (quem depois classifica a causa do 👎 no dashboard;
+    pode ser outro atendente)."""
 
     sql = """
-        INSERT INTO feedback (mensagem_id, positivo, comentario)
-        VALUES (%(mensagem_id)s, %(positivo)s, %(comentario)s)
+        INSERT INTO feedback (mensagem_id, positivo, comentario, criado_por)
+        VALUES (%(mensagem_id)s, %(positivo)s, %(comentario)s, %(criado_por)s)
         ON CONFLICT (mensagem_id) DO UPDATE
             SET positivo = EXCLUDED.positivo,
                 comentario = EXCLUDED.comentario,
+                criado_por = EXCLUDED.criado_por,
                 atualizada_em = now()
     """
     with get_connection() as conn:
-        conn.execute(sql, {"mensagem_id": mensagem_id, "positivo": positivo, "comentario": comentario})
+        conn.execute(
+            sql,
+            {
+                "mensagem_id": mensagem_id,
+                "positivo": positivo,
+                "comentario": comentario,
+                "criado_por": criado_por,
+            },
+        )
+
+
+_TIME_POR_CATEGORIA = {"documentacao": "time_dev", "pipeline": "time_7"}
+
+
+def time_sugerido(categoria: str) -> str:
+    """Time sugerido automaticamente pela categoria do 👎 (regra decidida com
+    o Arthur em 2026-07-29): documentação não responde a dúvida -> Time de
+    Desenvolvimento; documentação atende mas a resposta do bot foi ruim ->
+    Time 7. Quem chama pode sobrescrever o resultado antes de classificar."""
+
+    return _TIME_POR_CATEGORIA[categoria]
+
+
+def classificar_feedback(feedback_id: int, categoria: str, time_atribuido: str, classificado_por: str) -> None:
+    """Registra a causa de um 👎 (documentacao/pipeline) e o time responsável.
+    `classificado_por` é a identidade de quem classificou — hoje um e-mail
+    digitado na sessão do dashboard (ui/dashboard.py), sem login de verdade;
+    a função em si é agnóstica de canal, então uma futura triagem por outro
+    canal (ex.: WhatsApp) só precisa chamar isso com o texto de identidade
+    que tiver disponível, sem mudar nada aqui."""
+
+    sql = """
+        UPDATE feedback
+        SET categoria = %(categoria)s,
+            time_atribuido = %(time_atribuido)s,
+            classificado_por = %(classificado_por)s,
+            classificado_em = now()
+        WHERE id = %(feedback_id)s
+    """
+    with get_connection() as conn:
+        conn.execute(
+            sql,
+            {
+                "feedback_id": feedback_id,
+                "categoria": categoria,
+                "time_atribuido": time_atribuido,
+                "classificado_por": classificado_por,
+            },
+        )
 
 
 def carregar_historico(conversa_id: int, antes_de: int | None = None) -> list[Message]:

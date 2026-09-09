@@ -6,15 +6,19 @@ import streamlit as st
 from core.dashboard_data import (
     daily_feedback_counts,
     feedback_kpis,
+    listar_nao_classificados,
     listar_nao_respondidas,
     listar_negativos,
     recent_feedback,
 )
+from ui.auth import render_logout_button, require_login
 from ui.dashboard import (
+    render_classification_queue,
     render_daily_chart,
     render_distribution_section,
     render_kpi_cards,
     render_negative_feedback,
+    render_negative_feedback_filters,
     render_unanswered_questions,
 )
 from ui.sidebar import ensure_conversations_state, render_sidebar
@@ -29,6 +33,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Mesmo login do app.py: st.session_state é compartilhado entre as páginas
+# do multipage app, então quem já logou no chat entra direto aqui — a
+# mesma identidade autentica a classificação de feedback abaixo.
+atendente_email = require_login()
+
 # Mesma sidebar do app.py (lista de conversas) — sem isso, o Streamlit
 # desenha o menu de navegação padrão (claro), e a sidebar "pisca" diferente
 # ao trocar de página. ensure_conversations_state() é o mesmo bootstrap que
@@ -40,6 +49,7 @@ st.session_state.active_id = render_sidebar(
     st.session_state.conversation_order,
     st.session_state.active_id,
 )
+render_logout_button()
 # "+ Novo chat"/selecionar uma conversa aqui só troca o active_id — sem
 # navegar de volta, o clique parecia não fazer nada (o Dashboard não mostra
 # mensagem nenhuma). Manda pra tela do chat pra já ver o efeito do clique.
@@ -62,8 +72,14 @@ render_distribution_section(kpis, recent_feedback(limit=5))
 
 st.divider()
 
+st.subheader("🗂️ Não classificados")
+render_classification_queue(listar_nao_classificados(), atendente_email)
+
+st.divider()
+
 st.subheader("👎 Respostas com feedback negativo")
-render_negative_feedback(listar_negativos())
+categoria_filtro, time_filtro = render_negative_feedback_filters()
+render_negative_feedback(listar_negativos(categoria_filtro, time_filtro))
 
 st.divider()
 
