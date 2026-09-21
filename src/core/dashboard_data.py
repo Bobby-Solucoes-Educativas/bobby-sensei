@@ -36,19 +36,29 @@ def metricas_resumo() -> dict:
     return {"total_perguntas": total_perguntas, "positivos": positivos, "negativos": negativos}
 
 
-def listar_negativos() -> list[dict]:
-    """👎 com o histórico inteiro da conversa até a resposta avaliada
-    (não só a pergunta imediata) + comentário, mais recentes primeiro.
+def _negativos(condicao: str, params: dict) -> list[dict]:
+    """Base de `listar_negativos`/`listar_nao_classificados`: 👎 com o
+    histórico inteiro da conversa até a resposta avaliada (não só a pergunta
+    imediata) + comentário + classificação, mais recentes primeiro.
 
     `historico` é a lista de mensagens da mesma `conversa_id` com
     `criada_em <= criada_em da resposta avaliada`, em ordem cronológica —
     a última entrada é sempre a resposta que recebeu o 👎. Não duplica dado
-    (é uma consulta sobre `mensagens`, não uma cópia gravada no feedback)."""
+    (é uma consulta sobre `mensagens`, não uma cópia gravada no feedback).
+    `condicao` entra direto no WHERE (é sempre uma constante deste módulo,
+    nunca texto vindo de fora) — só pra não repetir o JOIN LATERAL entre as
+    duas funções que usam este helper."""
 
-    sql = """
+    sql = f"""
         SELECT
+            f.id AS feedback_id,
             f.comentario,
             f.criada_em,
+            f.criado_por,
+            f.categoria,
+            f.time_atribuido,
+            f.classificado_por,
+            f.classificado_em,
             hist.historico
         FROM feedback f
         JOIN mensagens resposta ON resposta.id = f.mensagem_id
@@ -61,25 +71,49 @@ def listar_negativos() -> list[dict]:
             WHERE m.conversa_id = resposta.conversa_id
               AND m.criada_em <= resposta.criada_em
         ) hist ON true
-        WHERE f.positivo = false
+        WHERE f.positivo = false AND {condicao}
         ORDER BY f.criada_em DESC
     """
     with get_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql)
+            cur.execute(sql, params)
             return cur.fetchall()
+
+
+def listar_negativos(categoria: str | None = None, time_atribuido: str | None = None) -> list[dict]:
+    """Todos os 👎 (classificados ou não), com filtro opcional por categoria
+    e/ou time atribuído — usado pela seção "Respostas com feedback negativo"
+    do dashboard. `None` em qualquer um dos dois significa "sem filtro"."""
+
+    condicao = "(%(categoria)s::text IS NULL OR f.categoria = %(categoria)s)" \
+        " AND (%(time_atribuido)s::text IS NULL OR f.time_atribuido = %(time_atribuido)s)"
+    return _negativos(condicao, {"categoria": categoria, "time_atribuido": time_atribuido})
+
+
+def listar_nao_classificados() -> list[dict]:
+    """Fila de 👎 aguardando classificação (categoria ainda NULL) — inclui
+    todo o histórico de 👎 anterior a essa feature, que nunca teve
+    categoria/time preenchidos."""
+
+    return _negativos("f.categoria IS NULL", {})
 
 
 def listar_nao_respondidas() -> list[dict]:
     """Mensagens de assistente com bot_respondeu = false: histórico inteiro
     da conversa até aquela resposta (não só a pergunta imediata) — mesmo
-    padrão de `listar_negativos`, ver docstring lá pra detalhe da LATERAL."""
+    padrão de `listar_negativos`, ver docstring lá pra detalhe da LATERAL.
+
+    Não passa por `feedback` (pode não haver 👍/👎 nenhum aqui) — a
+    identidade de quem perguntou vem de `conversas.atendente` (TAI7-24),
+    join direto com a conversa da própria mensagem."""
 
     sql = """
         SELECT
             resposta.criada_em,
+            c.atendente AS perguntado_por,
             hist.historico
         FROM mensagens resposta
+        JOIN conversas c ON c.id = resposta.conversa_id
         JOIN LATERAL (
             SELECT json_agg(
                 json_build_object('papel', m.papel, 'conteudo', m.conteudo, 'fontes', m.fontes)
@@ -189,7 +223,7 @@ def recent_feedback(limit: int = 5) -> list[dict]:
     mais recente primeiro — base da lista "Comentários recentes"."""
 
     sql = """
-        SELECT positivo, comentario, criada_em
+        SELECT positivo, comentario, criada_em, criado_por
         FROM feedback
         ORDER BY criada_em DESC
         LIMIT %(limit)s

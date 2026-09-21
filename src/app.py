@@ -17,6 +17,7 @@ from ui.chat_bubbles import (
     render_user_message,
     scroll_to_bottom,
 )
+from ui.auth import render_logout_button, require_login
 from ui.feedback import render_feedback_widget
 from ui.sidebar import ensure_conversations_state, render_sidebar
 from ui.theme import BACKGROUND
@@ -40,6 +41,12 @@ def _ensure_schema_once() -> None:
 
 _ensure_schema_once()
 
+# Precisa vir depois do ensure_schema (a tabela `atendentes` só existe depois
+# da migration 0009) e antes de qualquer UI do chat — barra tudo abaixo
+# (st.stop()) até logar. A mesma identidade também autentica a classificação
+# de feedback no dashboard (pages/1_Dashboard.py).
+atendente_email = require_login()
+
 
 def _persist(conversation: Conversation, message: Message, reply_to: int | None = None) -> None:
     """Salva a conversa (na 1ª mensagem) e a mensagem recém-adicionada
@@ -50,7 +57,7 @@ def _persist(conversation: Conversation, message: Message, reply_to: int | None 
     acontecem uma vez, na primeira mensagem persistida."""
 
     if conversation.db_id is None:
-        conversation.db_id = criar_conversa()
+        conversation.db_id = criar_conversa(atendente=atendente_email)
         if conversation.title:
             atualizar_titulo_conversa(conversation.db_id, conversation.title)
 
@@ -82,6 +89,7 @@ st.session_state.active_id = render_sidebar(
     st.session_state.conversation_order,
     st.session_state.active_id,
 )
+render_logout_button()
 
 ensure_conversations_state()
 

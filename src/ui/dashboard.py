@@ -10,10 +10,16 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from core.store import classificar_feedback, time_sugerido
 from ui.theme import BLACK, GREEN, LIME, RED, WHITE, rgba
 
 _CARD_BG = BLACK
 _CARD_TEXT = WHITE
+
+_LABEL_CATEGORIA = {"documentacao": "Documentação ruim", "pipeline": "Pipeline ruim"}
+_LABEL_TIME = {"time_7": "Time 7", "time_dev": "Time de Desenvolvimento"}
+_CATEGORIA_OPCOES = list(_LABEL_CATEGORIA)
+_TIME_OPCOES = list(_LABEL_TIME)
 
 
 def _card_html(label: str, value: str, *, value_color: str = WHITE) -> str:
@@ -298,11 +304,22 @@ def render_recent_comments(comments: list[dict]) -> None:
         else:
             texto = "Sem comentário"
             estilo_texto = f"color:{WHITE};font-style:italic;opacity:0.7;"
+        # "Enviado por" só quando existe (feedback de antes do login, TAI7-24,
+        # não tem essa identidade) — linha extra dentro do mesmo bloco, não dá
+        # pra usar st.caption aqui porque o card é escuro (texto padrão do
+        # Streamlit ficaria ilegível, mesmo motivo do resto deste componente).
+        enviado_por = (
+            f'<div style="color:{WHITE};opacity:0.55;font-size:0.85rem;">'
+            f'Enviado por {item["criado_por"]}</div>'
+            if item["criado_por"]
+            else ""
+        )
         st.markdown(
             f'<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;">'
             f'<div style="width:14px;height:14px;margin-top:3px;flex-shrink:0;'
             f'border:2px solid {cor};border-radius:3px;"></div>'
             f'<div><div style="{estilo_texto}">{texto}</div>'
+            f"{enviado_por}"
             f'<div style="color:{WHITE};opacity:0.55;font-size:0.85rem;margin-top:2px;">'
             f'{_relative_time(item["criada_em"])}</div>'
             "</div></div>",
@@ -328,13 +345,55 @@ def _render_historico_mensagem(m: dict) -> None:
     st.divider()
 
 
+def render_negative_feedback_filters() -> tuple[str | None, str | None]:
+    """Filtro por categoria/time atribuído da seção "Respostas com feedback
+    negativo" — "Todas"/"Todos" voltam `None` (sem filtro), repassado direto
+    pra `core.dashboard_data.listar_negativos`."""
+
+    col_categoria, col_time = st.columns(2)
+    with col_categoria:
+        categoria = st.selectbox(
+            "Filtrar por categoria",
+            [None, *_CATEGORIA_OPCOES],
+            format_func=lambda c: "Todas" if c is None else _LABEL_CATEGORIA[c],
+            key="filtro-categoria",
+        )
+    with col_time:
+        time_atribuido = st.selectbox(
+            "Filtrar por time atribuído",
+            [None, *_TIME_OPCOES],
+            format_func=lambda t: "Todos" if t is None else _LABEL_TIME[t],
+            key="filtro-time",
+        )
+    return categoria, time_atribuido
+
+
+def _render_criado_por_caption(item: dict) -> None:
+    """Quem enviou o 👍/👎 (`feedback.criado_por`, TAI7-24) — fica em branco
+    pro histórico anterior ao login, que nunca teve essa identidade."""
+
+    if item["criado_por"]:
+        st.caption(f"Enviado por {item['criado_por']}")
+
+
+def _render_classificacao_caption(item: dict) -> None:
+    if item["categoria"]:
+        st.caption(
+            f"🏷️ {_LABEL_CATEGORIA[item['categoria']]} → {_LABEL_TIME[item['time_atribuido']]} "
+            f"(classificado por {item['classificado_por']} em {item['classificado_em']:%d/%m/%Y %H:%M})"
+        )
+    else:
+        st.caption("🏷️ Não classificado")
+
+
 def render_negative_feedback(items: list[dict]) -> None:
-    """Lista dos 👎, cada um em um expander mostrando o histórico inteiro da
-    conversa até a resposta avaliada (não só a pergunta imediata) + o
-    comentário do feedback."""
+    """Lista dos 👎 (classificados ou não, conforme o filtro em
+    `render_negative_feedback_filters`), cada um em um expander mostrando o
+    histórico inteiro da conversa até a resposta avaliada (não só a pergunta
+    imediata) + o comentário do feedback + a classificação, se houver."""
 
     if not items:
-        st.caption("Nenhum 👎 registrado até agora.")
+        st.caption("Nenhum 👎 encontrado para esse filtro.")
         return
 
     for item in items:
@@ -349,7 +408,66 @@ def render_negative_feedback(items: list[dict]) -> None:
                 st.markdown(f"**Comentário:** {item['comentario']}")
             else:
                 st.caption("Sem comentário.")
+            _render_criado_por_caption(item)
             st.caption(f"Avaliado em {item['criada_em']:%d/%m/%Y %H:%M}")
+            _render_classificacao_caption(item)
+
+
+def render_classification_queue(items: list[dict], atendente_email: str) -> None:
+    """Fila de 👎 aguardando classificação (categoria/time ainda NULL): cada
+    item mostra o histórico da conversa + um formulário pra escolher a causa
+    (documentação x pipeline). O time é sugerido automaticamente pela
+    categoria (`core.store.time_sugerido`), mas pode ser sobrescrito antes de
+    enviar — a chave do selectbox de time inclui a categoria escolhida pra
+    que trocar de categoria recalcule a sugestão. `atendente_email` vem do
+    login (ui/auth.require_login) já validado por quem chamou, então chega
+    aqui sempre preenchido."""
+
+    if not items:
+        st.caption("Nenhum 👎 aguardando classificação.")
+        return
+
+    for item in items:
+        historico = item["historico"]
+        perguntas = [m["conteudo"] for m in historico if m["papel"] == "usuario"]
+        titulo = perguntas[-1] if perguntas else "(pergunta não identificada)"
+        feedback_id = item["feedback_id"]
+
+        with st.expander(f"🗨️ {titulo}"):
+            for m in historico:
+                _render_historico_mensagem(m)
+            if item["comentario"]:
+                st.markdown(f"**Comentário:** {item['comentario']}")
+            else:
+                st.caption("Sem comentário.")
+            _render_criado_por_caption(item)
+
+            categoria = st.selectbox(
+                "Causa do feedback negativo",
+                _CATEGORIA_OPCOES,
+                format_func=lambda c: _LABEL_CATEGORIA[c],
+                key=f"categoria-{feedback_id}",
+                index=None,
+                placeholder="Selecione a causa...",
+            )
+            time_escolhido = None
+            if categoria:
+                sugerido = time_sugerido(categoria)
+                time_escolhido = st.selectbox(
+                    "Time responsável",
+                    _TIME_OPCOES,
+                    format_func=lambda t: _LABEL_TIME[t],
+                    key=f"time-{feedback_id}-{categoria}",
+                    index=_TIME_OPCOES.index(sugerido),
+                )
+
+            if st.button(
+                "Classificar",
+                key=f"classificar-{feedback_id}",
+                disabled=not categoria,
+            ):
+                classificar_feedback(feedback_id, categoria, time_escolhido, atendente_email)
+                st.rerun()
 
 
 def render_unanswered_questions(items: list[dict]) -> None:
@@ -372,4 +490,6 @@ def render_unanswered_questions(items: list[dict]) -> None:
         with st.expander(f"❓ {titulo}"):
             for m in historico:
                 _render_historico_mensagem(m)
+            if item["perguntado_por"]:
+                st.caption(f"Perguntado por {item['perguntado_por']}")
             st.caption(f"Em {item['criada_em']:%d/%m/%Y %H:%M}")
