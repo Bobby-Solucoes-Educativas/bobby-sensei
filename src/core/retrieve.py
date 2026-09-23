@@ -8,8 +8,8 @@ Fluxo (RAG híbrido, ponta a ponta):
       -> _hybrid_retrieve   (embedding da pergunta -> busca vetorial + BM25 -> RRF)
       -> _format_context    (chunks recuperados viram texto numerado com fonte)
       -> prompt             (ChatPromptTemplate: system + histórico + contexto + pergunta)
-      -> llm                (ChatOpenAI, GPT-5.4 mini)
-      -> StrOutputParser    (extrai a resposta como str)
+      -> llm_estruturado    (ChatOpenAI, GPT-5.4 mini, with_structured_output)
+                            -> RespostaEstruturada {tipo, texto}
 
 A chain propriamente dita (prompt -> llm -> parser) é montada com LCEL
 (operador `|`), como pedido na atualização da TAI7-8 de 2026-07-15. O
@@ -22,13 +22,21 @@ pura e reutilizável; o app.py é quem chama `answer()` e desenha a tela.
 
 Único ponto de entrada público (consumido pela TAI7-9, interface Streamlit):
 
-    answer(pergunta: str, history: list[dict] | None = None) -> str
+    answer(pergunta: str, history: list[dict] | None = None,
+           ultima_rodada: bool = False) -> RespostaEstruturada
 
 `history` são as mensagens anteriores da conversa — os mesmos objetos
 `chat_state.Message` que a UI e a persistência (core/store.py) já usam, sem
 inventar um formato paralelo. Não inclui a pergunta atual. Vira o
 `history_context` do prompt, cortado para caber em
 LIMIT_TOKENS_HISTORY_CONTEXT, a janela de contexto do histórico.
+
+Saída estruturada (decisão do Arthur, 2026-07-29): a resposta não é mais
+texto livre — é um `RespostaEstruturada` com `tipo` ("resposta",
+"pergunta_esclarecimento" ou "sem_contexto_final") e `texto`. Quando o
+contexto recuperado não basta, o modelo pergunta em vez de desistir de cara;
+`ultima_rodada` (decidido por core/chatbot_core.py, que conta as rodadas de
+esclarecimento consecutivas) força o desfecho final quando o limite estoura.
 
 DADOS: `_hybrid_retrieve` consulta a tabela `chunks` populada pela TAI7-6
 (`embed.py`) — schema e índices (HNSW vetorial + BM25 do ParadeDB) são criados
@@ -38,6 +46,7 @@ duas buscas, a fusão RRF e a geração respondem com o contexto recuperado.
 """
 
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, trim_messages
@@ -47,6 +56,7 @@ from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_openai import ChatOpenAI
 from openai import OpenAI
 from psycopg.rows import dict_row
+from pydantic import BaseModel
 
 # Import irmão resiliente aos dois modos de execução do projeto: como pacote
 # (`from core.db import ...`, caso do streamlit rodando com src/ no path) e como
@@ -93,12 +103,37 @@ RRF_K = 60
 # da conversa e o custo por pergunta na mesma proporção.
 LIMIT_TOKENS_HISTORY_CONTEXT = 1000
 
+
+class RespostaEstruturada(BaseModel):
+    """Saída estruturada da chain de resposta (decisão do Arthur, 2026-07-29:
+    fluxo investigativo antes de desistir).
+
+    `tipo` substitui a antiga heurística de frases (_FRASES_NAO_RESPONDIDO,
+    removida de chatbot_core.py) por um sinal explícito do próprio LLM sobre
+    o desfecho do turno — chatbot_core.py usa esse campo pra contar rodadas
+    de esclarecimento e decidir quando forçar a desistência (ver
+    LIMITE_RODADAS_ESCLARECIMENTO)."""
+
+    tipo: Literal["resposta", "pergunta_esclarecimento", "sem_contexto_final"]
+    texto: str
+
+
+# Injetada no prompt (via {instrucao_extra}) quando chatbot_core.py já contou
+# LIMITE_RODADAS_ESCLARECIMENTO rodadas de pergunta_esclarecimento seguidas —
+# instrui o LLM a fechar o turno em vez de perguntar de novo. É só a PRIMEIRA
+# linha de defesa: chatbot_core.py força tipo="sem_contexto_final" mesmo que
+# o LLM ignore isso (não dá pra depender só do modelo respeitar o limite).
+_MENSAGEM_LIMITE_RODADAS = (
+    "\n\n[O limite de rodadas de esclarecimento desta conversa já foi "
+    "atingido e o contexto abaixo continua insuficiente. NÃO peça "
+    "esclarecimento de novo: use tipo=\"sem_contexto_final\".]"
+)
+
 _SYSTEM_PROMPT = (
     "Você é o Bobby Sensei, assistente que responde dúvidas usando a "
     "documentação interna da empresa. Responda em português, de forma direta, "
-    "usando SOMENTE as informações do contexto fornecido. Se o contexto não "
-    "for suficiente para responder, diga que não encontrou a informação na "
-    "documentação — não invente. Quando útil, cite a página de origem. "
+    "usando SOMENTE as informações do contexto fornecido — não invente. "
+    "Quando útil, cite a página de origem. "
     # Sem esta parte o modelo às vezes trata um acompanhamento curto como
     # mensagem incompleta ("você escreveu apenas 'quero'"), mesmo com a
     # conversa no prompt e o contexto certo recuperado.
@@ -107,11 +142,48 @@ _SYSTEM_PROMPT = (
     "\"e isso?\", \"continua\"), interprete-a à luz da última resposta — "
     "inclusive quando ela estiver aceitando algo que você mesmo ofereceu. Não "
     "responda que a mensagem está incompleta se a conversa deixa claro o que "
-    "foi pedido."
+    "foi pedido. "
+    # Fluxo investigativo (decisão do Arthur, 2026-07-29): antes o bot
+    # desistia na hora quando o contexto não bastava (ex.: "apareceram
+    # registros sem eu criar" virava "não consigo ajudar" de cara). Agora
+    # investiga primeiro — só desiste depois de tentar entender o caso.
+    "Preencha sempre `tipo` e `texto`: se o contexto recuperado for "
+    "suficiente para responder, use tipo=\"resposta\" e escreva a resposta "
+    "em `texto`. Se NÃO for suficiente, use tipo=\"pergunta_esclarecimento\" "
+    "e escreva em `texto` UMA pergunta objetiva que ajude a investigar o "
+    "caso: o que o usuário esperava que acontecesse, quando isso aconteceu e "
+    "em qual tela/fluxo do sistema — MESMO que a pergunta pareça vaga, fora "
+    "do escopo da documentação ou de algo que a princípio parece não ter "
+    "resposta: pergunte antes de descartar, a pessoa do outro lado pode "
+    "esclarecer algo que muda tudo. "
+    # Único gatilho válido pra desistir: a nota entre colchetes que
+    # chatbot_core.py injeta quando a contagem de rodadas (fora do LLM, ver
+    # LIMITE_RODADAS_ESCLARECIMENTO) já esgotou. Sem essa nota, tipo NUNCA é
+    # sem_contexto_final — mesmo achando pouco provável que uma pergunta
+    # tenha resposta na documentação, é a pergunta de esclarecimento (ou a
+    # nota) que decide isso, não o modelo por conta própria.
+    "Use tipo=\"sem_contexto_final\" SE E SOMENTE SE a mensagem do usuário "
+    "trouxer uma instrução entre colchetes avisando que o limite de rodadas "
+    "de esclarecimento acabou — nunca por iniciativa própria, mesmo que já "
+    "tenha perguntado antes e a resposta não tenha ajudado. Nesse caso, "
+    "escreva em `texto` uma desistência educada (diga que não encontrou a "
+    "informação na documentação) e ofereça abrir um chamado para o time "
+    "verificar — só a oferta, em texto; não afirme que um chamado já foi "
+    "aberto."
+    # A criação de chamado de verdade (destino Jira, canal-alvo WhatsApp,
+    # classificação manual, gatilho em aberto) é decisão do Arthur pra uma
+    # sprint futura — ver o comentário completo em
+    # chatbot_core._DESISTENCIA_LIMITE_RODADAS.
 )
 
 
 _llm = ChatOpenAI(model=LLM_MODEL, temperature=LLM_TEMPERATURE)
+# with_structured_output troca o parsing de texto livre por function-calling
+# (o schema de RespostaEstruturada vira a assinatura de uma tool obrigatória
+# pro LLM chamar) — usado só na chain de RESPOSTA. A chain de condensação
+# (_condense_chain, abaixo) continua com _llm cru + StrOutputParser: ela só
+# reescreve a pergunta como string, não decide tipo/desfecho.
+_llm_estruturado = _llm.with_structured_output(RespostaEstruturada)
 
 
 def _openai_client() -> OpenAI:
@@ -390,7 +462,11 @@ _prompt = ChatPromptTemplate.from_messages(
     [
         ("system", _SYSTEM_PROMPT),
         MessagesPlaceholder("history_context"),
-        ("human", "Contexto extraído da documentação:\n\n{contexto}\n\nPergunta: {pergunta}"),
+        (
+            "human",
+            "Contexto extraído da documentação:\n\n{contexto}\n\n"
+            "Pergunta: {pergunta}{instrucao_extra}",
+        ),
     ]
 )
 
@@ -399,21 +475,27 @@ _prompt = ChatPromptTemplate.from_messages(
 # Passos 6 e 7 — chain LCEL (retrieval -> prompt -> GPT-5.4 mini -> resposta)
 # e função pública única que a TAI7-9 consome
 # --------------------------------------------------------------------------- #
+# Sem StrOutputParser: _llm_estruturado já devolve um RespostaEstruturada
+# (with_structured_output cuida do parsing).
 rag_chain = (
     RunnablePassthrough.assign(contexto=RunnableLambda(_retrieve_and_format))
     | _prompt
-    | _llm
-    | StrOutputParser()
+    | _llm_estruturado
 )
 
 
-def answer(pergunta: str, history: list[Message] | None = None) -> str:
+def answer(
+    pergunta: str,
+    history: list[Message] | None = None,
+    ultima_rodada: bool = False,
+) -> RespostaEstruturada:
     """Ponto de entrada único do RAG híbrido, consumido pela TAI7-9.
 
     `history` são as mensagens anteriores da conversa (chat_state.Message),
     sem incluir a pergunta atual. Ele vira o `history_context` do prompt,
-    limitado a
-    LIMIT_TOKENS_HISTORY_CONTEXT. Retorna a resposta em texto puro.
+    limitado a LIMIT_TOKENS_HISTORY_CONTEXT. `ultima_rodada` (calculado por
+    chatbot_core.py a partir da contagem de rodadas de esclarecimento) avisa
+    o LLM que não deve mais perguntar — ver _MENSAGEM_LIMITE_RODADAS.
 
     (Requer a TAI7-6 pronta: tabela `chunks` populada num ParadeDB rodando.)
     """
@@ -421,16 +503,19 @@ def answer(pergunta: str, history: list[Message] | None = None) -> str:
         {
             "pergunta": pergunta,
             "history_context": build_history_context(history),
+            "instrucao_extra": _MENSAGEM_LIMITE_RODADAS if ultima_rodada else "",
         }
     )
 
 
-_answer_chain = _prompt | _llm | StrOutputParser()
+_answer_chain = _prompt | _llm_estruturado
 
 
 def answer_with_chunks(
-    pergunta: str, history: list[Message] | None = None
-) -> tuple[str, list[dict]]:
+    pergunta: str,
+    history: list[Message] | None = None,
+    ultima_rodada: bool = False,
+) -> tuple[RespostaEstruturada, list[dict]]:
     """Como `answer()`, mas também devolve os chunks recuperados (pra exibir
     como fonte/anexo na UI). Roda o mesmo retrieval e a mesma chain de
     geração, só expondo o resultado intermediário do `_hybrid_retrieve`."""
@@ -440,14 +525,15 @@ def answer_with_chunks(
     chunks = _hybrid_retrieve(
         {"pergunta": pergunta, "history_context": history_context}
     )
-    resposta = _answer_chain.invoke(
+    resultado = _answer_chain.invoke(
         {
             "pergunta": pergunta,
             "history_context": history_context,
             "contexto": _format_context(chunks),
+            "instrucao_extra": _MENSAGEM_LIMITE_RODADAS if ultima_rodada else "",
         }
     )
-    return resposta, chunks
+    return resultado, chunks
 
 
 if __name__ == "__main__":
@@ -456,7 +542,7 @@ if __name__ == "__main__":
         pergunta = input("Pergunta (Enter para sair): ").strip()
         if not pergunta:
             break
-        resposta = answer(pergunta, history)
-        print(f"\n{resposta}\n")
+        resultado = answer(pergunta, history)
+        print(f"\n[{resultado.tipo}] {resultado.texto}\n")
         history.append({"role": "user", "content": pergunta})
-        history.append({"role": "assistant", "content": resposta})
+        history.append({"role": "assistant", "content": resultado.texto})
