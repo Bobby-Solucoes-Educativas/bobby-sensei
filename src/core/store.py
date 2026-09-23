@@ -55,7 +55,7 @@ def salvar_mensagem(
     conversa_id: int,
     papel: str,
     conteudo: str,
-    bot_respondeu: bool | None = None,
+    tipo_resposta: str | None = None,
     fontes: list[dict] | None = None,
     reply_to: int | None = None,
 ) -> int:
@@ -63,17 +63,24 @@ def salvar_mensagem(
 
     `reply_to` liga a resposta do assistente à pergunta que a originou —
     FK explícita, mais robusta que inferir pela mensagem anterior na mesma
-    conversa (ver docs/tai7-13-14-conflitos.md, ponto 4). `bot_respondeu` e
+    conversa (ver docs/tai7-13-14-conflitos.md, ponto 4). `tipo_resposta` e
     `fontes` só fazem sentido pra papel='assistente' — forçados a None/vazio
-    nas mensagens de usuário pra nunca violar o CHECK do banco."""
+    nas mensagens de usuário pra nunca violar o CHECK do banco.
+
+    `bot_respondeu` (migration 0004) continua existindo na tabela, mas agora
+    é DERIVADO de `tipo_resposta` (`tipo_resposta == "resposta"`) em vez de
+    receber um valor à parte — fluxo investigativo do RAG (decisão do
+    Arthur, 2026-07-29): quem ainda lê essa coluna (ex.: dashboard antigo)
+    continua funcionando sem mudança."""
 
     if papel != "assistente":
-        bot_respondeu = None
+        tipo_resposta = None
         fontes = None
+    bot_respondeu = None if tipo_resposta is None else tipo_resposta == "resposta"
 
     sql = """
-        INSERT INTO mensagens (conversa_id, papel, conteudo, bot_respondeu, fontes, reply_to)
-        VALUES (%(conversa_id)s, %(papel)s, %(conteudo)s, %(bot_respondeu)s, %(fontes)s, %(reply_to)s)
+        INSERT INTO mensagens (conversa_id, papel, conteudo, bot_respondeu, tipo_resposta, fontes, reply_to)
+        VALUES (%(conversa_id)s, %(papel)s, %(conteudo)s, %(bot_respondeu)s, %(tipo_resposta)s, %(fontes)s, %(reply_to)s)
         RETURNING id
     """
     with get_connection() as conn:
@@ -84,6 +91,7 @@ def salvar_mensagem(
                 "papel": papel,
                 "conteudo": conteudo,
                 "bot_respondeu": bot_respondeu,
+                "tipo_resposta": tipo_resposta,
                 "fontes": json.dumps(fontes or []),
                 "reply_to": reply_to,
             },
@@ -181,7 +189,7 @@ def carregar_historico(conversa_id: int, antes_de: int | None = None) -> list[Me
     """
 
     sql = """
-        SELECT id, papel, conteudo, fontes, bot_respondeu
+        SELECT id, papel, conteudo, fontes, bot_respondeu, tipo_resposta
         FROM mensagens
         WHERE conversa_id = %(conversa_id)s
           AND (%(antes_de)s::bigint IS NULL OR id < %(antes_de)s::bigint)
@@ -199,6 +207,7 @@ def carregar_historico(conversa_id: int, antes_de: int | None = None) -> list[Me
             chunks=linha["fontes"] or [],
             db_id=linha["id"],
             bot_respondeu=linha["bot_respondeu"],
+            tipo_resposta=linha["tipo_resposta"],
         )
         for linha in linhas
     ]
