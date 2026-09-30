@@ -471,12 +471,12 @@ def render_classification_queue(items: list[dict], atendente_email: str) -> None
 
 
 def render_unanswered_questions(items: list[dict]) -> None:
-    """Perguntas cuja resposta ficou com `bot_respondeu = false` — sinal
-    gravado no momento da resposta (ver core.chatbot_core._bot_respondeu);
-    linhas de antes da TAI7-13 foram preenchidas por heurística no backfill
-    (migration 0004), não um classificador exato. Cada expander mostra o
-    histórico inteiro da conversa até essa resposta, não só a pergunta
-    imediata (mesmo padrão de render_negative_feedback)."""
+    """Perguntas cujo desfecho final foi "sem contexto" (ver
+    core.dashboard_data.listar_nao_respondidas: tipo_resposta =
+    'sem_contexto_final', ou bot_respondeu = false pro histórico anterior a
+    essa coluna). Cada expander mostra o histórico inteiro da conversa até
+    essa resposta, não só a pergunta imediata (mesmo padrão de
+    render_negative_feedback)."""
 
     if not items:
         st.caption("Nenhuma pergunta sem resposta detectada até agora.")

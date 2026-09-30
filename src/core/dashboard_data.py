@@ -99,9 +99,17 @@ def listar_nao_classificados() -> list[dict]:
 
 
 def listar_nao_respondidas() -> list[dict]:
-    """Mensagens de assistente com bot_respondeu = false: histórico inteiro
-    da conversa até aquela resposta (não só a pergunta imediata) — mesmo
-    padrão de `listar_negativos`, ver docstring lá pra detalhe da LATERAL.
+    """Mensagens de assistente cujo desfecho final foi "sem contexto":
+    histórico inteiro da conversa até aquela resposta (não só a pergunta
+    imediata) — mesmo padrão de `listar_negativos`, ver docstring lá pra
+    detalhe da LATERAL.
+
+    Fluxo investigativo do RAG (decisão do Arthur, 2026-07-29): desfecho
+    final é tipo_resposta='sem_contexto_final' — uma pergunta_esclarecimento
+    no meio da investigação NÃO entra aqui, só quando o bot já desistiu de
+    verdade. Histórico anterior a essa coluna (tipo_resposta IS NULL) cai de
+    volta na heurística antiga (bot_respondeu = false), única informação que
+    existe pra ele.
 
     Não passa por `feedback` (pode não haver 👍/👎 nenhum aqui) — a
     identidade de quem perguntou vem de `conversas.atendente` (TAI7-24),
@@ -123,7 +131,11 @@ def listar_nao_respondidas() -> list[dict]:
             WHERE m.conversa_id = resposta.conversa_id
               AND m.criada_em <= resposta.criada_em
         ) hist ON true
-        WHERE resposta.papel = 'assistente' AND resposta.bot_respondeu = false
+        WHERE resposta.papel = 'assistente'
+          AND (
+            resposta.tipo_resposta = 'sem_contexto_final'
+            OR (resposta.tipo_resposta IS NULL AND resposta.bot_respondeu = false)
+          )
         ORDER BY resposta.criada_em DESC
     """
     with get_connection() as conn:

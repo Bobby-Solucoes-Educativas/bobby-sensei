@@ -19,7 +19,15 @@ class Message:
     db_id: int | None = None
     # Só relevante pra role="assistant" — se o RAG achou contexto (True) ou
     # caiu no fallback de "não sei" (False); ver core/chatbot_core.py.
+    # Derivado de tipo_resposta ao persistir (core/store.salvar_mensagem);
+    # mantido só para não quebrar quem já lê essa coluna.
     bot_respondeu: bool | None = None
+    # Só relevante pra role="assistant" — desfecho do turno no fluxo
+    # investigativo do RAG (decisão do Arthur, 2026-07-29): "resposta"
+    # respondeu de verdade, "pergunta_esclarecimento" ainda está investigando,
+    # "sem_contexto_final" desistiu. core/chatbot_core.py lê isto do histórico
+    # pra contar rodadas de esclarecimento consecutivas antes de chamar o RAG.
+    tipo_resposta: str | None = None
 
 
 @dataclass
@@ -42,12 +50,12 @@ def add_message(
     role: str,
     content: str,
     chunks: list[dict] | None = None,
-    bot_respondeu: bool | None = None,
+    tipo_resposta: str | None = None,
 ) -> None:
     """Adiciona uma mensagem à conversa e deriva o título a partir da 1ª pergunta."""
 
     conversation.messages.append(
-        Message(role=role, content=content, chunks=chunks or [], bot_respondeu=bot_respondeu)
+        Message(role=role, content=content, chunks=chunks or [], tipo_resposta=tipo_resposta)
     )
     if conversation.title is None and role == "user":
         conversation.title = _derive_title(content)

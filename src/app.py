@@ -65,7 +65,7 @@ def _persist(conversation: Conversation, message: Message, reply_to: int | None 
         conversation.db_id,
         papel_de_role(message.role),
         message.content,
-        bot_respondeu=message.bot_respondeu,
+        tipo_resposta=message.tipo_resposta,
         fontes=message.chunks,
         reply_to=reply_to,
     )
@@ -141,10 +141,10 @@ else:
         thinking_placeholder = st.empty()
         with thinking_indicator(thinking_placeholder):
             scroll_to_bottom()
-            resposta, chunks, bot_respondeu = answer_question(
+            resposta, chunks, tipo_resposta = answer_question(
                 pergunta_message.content, history
             )
-        add_message(active_conversation, "assistant", resposta, chunks, bot_respondeu=bot_respondeu)
+        add_message(active_conversation, "assistant", resposta, chunks, tipo_resposta=tipo_resposta)
         _persist(active_conversation, active_conversation.messages[-1], reply_to=pergunta_message.db_id)
         st.rerun()
 
